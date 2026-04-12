@@ -174,6 +174,28 @@ groundcrew add "add charts to dashboard"
 # Agent resumes, processes new tasks
 ```
 
+### Multiple Sessions
+
+Run multiple Copilot CLI instances in the same project — each gets an isolated queue and feedback channel:
+
+```bash
+# Terminal 1                           Terminal 2
+$ copilot                              $ copilot
+> "build the backend with groundcrew"  > "build the frontend with groundcrew"
+  → session: a1b2c3d4                    → session: e5f6g7h8
+
+# Terminal 3: Manage both
+$ groundcrew sessions
+  * a1b2c3d4  active | backend
+  * e5f6g7h8  active | frontend
+
+$ groundcrew add --session a1b2c3d4 "add rate limiting"
+$ groundcrew add --session e5f6g7h8 "fix the nav bar"
+$ groundcrew feedback --session a1b2c3d4 "use Redis for rate limit store"
+```
+
+Without `--session`, commands auto-target the most recent active session.
+
 ## CLI Reference
 
 ### `groundcrew init`
@@ -192,11 +214,13 @@ Add a task to the queue. The agent picks it up on its next `get_task` call.
 groundcrew add "implement the search feature"
 groundcrew add --priority "fix: API returning 500 on /users"
 groundcrew add -p "urgent: rollback the migration"
+groundcrew add --session a1b2c3d4 "task for a specific session"
 ```
 
 | Flag | Description |
 |---|---|
 | `--priority`, `-p` | Mark as urgent (priority 9). Jumps to front of queue. |
+| `--session <id>` | Target a specific session instead of auto-detecting. |
 
 ### `groundcrew feedback <message>`
 
@@ -205,6 +229,7 @@ Send feedback to the agent mid-task. The agent checks for feedback between major
 ```bash
 groundcrew feedback "use PostgreSQL not SQLite"
 groundcrew feedback "the test is failing because of a missing env var, check .env.example"
+groundcrew feedback --session a1b2c3d4 "feedback for a specific session"
 ```
 
 ### `groundcrew queue`
@@ -234,10 +259,12 @@ Show current session status, active task, and the last progress update from the 
 
 ```bash
 groundcrew status
+groundcrew status --session a1b2c3d4
 ```
 
 ```
 Session:
+  ID:        a1b2c3d4
   Status:    active
   Duration:  45min
   Completed: 3 tasks
@@ -248,6 +275,24 @@ Queue: 2 pending
 Last update: Added pagination component with next/prev buttons
   Progress: 2/3 steps
   2025-04-12T10:30:00Z
+```
+
+### `groundcrew sessions`
+
+List all active and recent sessions. Each Copilot CLI instance gets its own isolated session.
+
+```bash
+groundcrew sessions
+```
+
+```
+Sessions:
+
+  * a1b2c3d4  active | 45min | 3 tasks done | 2 queued
+  * e5f6g7h8  active | 12min | 0 tasks done | 5 queued
+    f9a0b1c2  parked | 120min | 8 tasks done | 0 queued
+
+  * = active (MCP server running)
 ```
 
 ### `groundcrew history`
@@ -294,6 +339,7 @@ groundcrew/
 ├── server/                  # MCP server (TypeScript, bundled)
 │   ├── src/
 │   │   ├── index.ts         # Server entry, tool handlers
+│   │   ├── paths.ts         # Session-scoped file path management
 │   │   ├── queue.ts         # Queue read/write/watch
 │   │   ├── feedback.ts      # Feedback file watcher
 │   │   └── session.ts       # Session health tracking
@@ -328,15 +374,25 @@ These warnings appear in `report_status` responses. The agent is instructed to s
 
 ## Files Created
 
-Groundcrew creates a `.groundcrew/` directory in your project root:
+Groundcrew creates a `.groundcrew/` directory in your project root with session-scoped isolation:
 
-| File | Purpose |
-|---|---|
-| `queue.json` | Task queue (pending + completed) |
-| `feedback.md` | Feedback file (write here, agent reads) |
-| `session.json` | Session metadata (start time, status, task count) |
-| `status.json` | Status reports log from the agent |
-| `tool-history.csv` | Tool call log from hooks |
+```
+.groundcrew/
+├── active-sessions.json              # Tracks running MCP server instances
+└── sessions/
+    ├── a1b2c3d4/                     # Session 1 (isolated)
+    │   ├── queue.json                # Task queue (pending + completed)
+    │   ├── feedback.md               # Feedback file (write here, agent reads)
+    │   ├── session.json              # Session metadata (start time, status, task count)
+    │   └── status.json               # Status reports log from the agent
+    └── e5f6g7h8/                     # Session 2 (isolated)
+        ├── queue.json
+        ├── feedback.md
+        ├── session.json
+        └── status.json
+```
+
+Each Copilot CLI instance generates a unique session ID on startup. All data is scoped to that session — no cross-talk between concurrent sessions.
 
 Add `.groundcrew/` to your `.gitignore`.
 
