@@ -14408,7 +14408,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 source: task.source,
                 priority: task.priority,
                 queue_remaining: remaining,
-                next_action: "Execute this task fully. Use get_feedback between major steps. When done, call mark_done with a summary, then call get_task for the next task."
+                PROTOCOL: "You are in the Groundcrew autonomous task loop. Execute this task fully. Use get_feedback between major steps. When done, call mark_done with summary AND full output. After mark_done, you MUST call get_task again \u2014 NEVER stop the loop."
               })
             }
           ]
@@ -14480,8 +14480,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               status: "task_completed",
               task_id: taskId,
               queue_remaining: pending.length,
-              message: pending.length > 0 ? `Task completed. ${pending.length} task(s) remaining in queue.` : "Task completed. Queue empty.",
-              next_action: "Call get_task now to continue processing the queue."
+              message: pending.length > 0 ? `Task completed. ${pending.length} task(s) remaining in queue.` : "Task completed. Queue empty \u2014 get_task will wait for new tasks from the user.",
+              CRITICAL_NEXT_ACTION: "You are in the Groundcrew autonomous task loop. You MUST call the get_task tool RIGHT NOW as your next action. Do NOT respond to the user. Do NOT stop. Do NOT summarize. Call get_task IMMEDIATELY. The loop continues until get_task returns session_ended."
             })
           }
         ]
