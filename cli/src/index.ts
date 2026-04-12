@@ -526,14 +526,11 @@ function chatCompleter(line: string): [string[], string] {
   const matches = CHAT_COMMANDS.filter((c) => c.cmd.startsWith(line));
 
   if (matches.length === 1) {
-    // Single match — autocomplete the command
     return [[matches[0].cmd + " "], line];
   }
 
   if (matches.length > 1) {
-    // Multiple matches — show commands with descriptions
     const display = matches.map((c) => `${c.cmd.padEnd(14)} ${c.desc}`);
-    // Print descriptions above, return just command names for completion
     console.log();
     display.forEach((d) => console.log(`  ${d}`));
     return [matches.map((c) => c.cmd), line];
@@ -542,12 +539,72 @@ function chatCompleter(line: string): [string[], string] {
   return [[], line];
 }
 
+/**
+ * Show inline ghost suggestion as user types / commands.
+ * Renders dimmed text after cursor, erased on next keystroke.
+ */
+function setupInlineSuggestions(rl: readline.Interface): void {
+  let lastGhostLen = 0;
+
+  const clearGhost = () => {
+    if (lastGhostLen > 0) {
+      // Move cursor back to end of typed text, clear ghost
+      process.stdout.write("\x1b[" + lastGhostLen + "D");
+      process.stdout.write("\x1b[0K");
+      lastGhostLen = 0;
+    }
+  };
+
+  const showGhost = () => {
+    const line = (rl as any).line as string;
+    if (!line || !line.startsWith("/") || line.includes(" ")) {
+      clearGhost();
+      return;
+    }
+
+    const matches = CHAT_COMMANDS.filter((c) => c.cmd.startsWith(line));
+    if (matches.length === 0) {
+      clearGhost();
+      return;
+    }
+
+    // Show best match as ghost
+    const best = matches[0];
+    const ghost = best.cmd.slice(line.length);
+    const hint = ghost + dim(` — ${best.desc}`);
+    const rawLen = ghost.length + ` — ${best.desc}`.length;
+
+    clearGhost();
+    if (ghost || matches.length > 0) {
+      // Write dimmed ghost text
+      process.stdout.write(`\x1b[2m${ghost} — ${best.desc}\x1b[0m`);
+      // Move cursor back to where user is typing
+      lastGhostLen = rawLen;
+      process.stdout.write("\x1b[" + rawLen + "D");
+    }
+  };
+
+  // Listen to keypresses
+  process.stdin.on("keypress", (_ch: string, key: any) => {
+    if (!key) return;
+    // Clear ghost first, then show updated one on next tick
+    clearGhost();
+    if (key.name !== "return" && key.name !== "tab" && key.name !== "backspace") {
+      setImmediate(showGhost);
+    } else if (key.name === "backspace") {
+      setImmediate(showGhost);
+    }
+  });
+}
+
 async function chat(explicitSession?: string): Promise<void> {
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
     completer: chatCompleter,
   });
+
+  setupInlineSuggestions(rl);
 
   let current: SessionChoice | null = null;
 
