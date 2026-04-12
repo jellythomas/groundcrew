@@ -14282,6 +14282,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         type: "object",
         properties: {}
       }
+    },
+    {
+      name: "session_info",
+      description: "Get the current Groundcrew session info. Call this when activating groundcrew to display the session ID to the user. Always call this first before any other groundcrew tool so the user knows which session they're on.",
+      inputSchema: {
+        type: "object",
+        properties: {}
+      }
     }
   ]
 }));
@@ -14460,6 +14468,30 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               })),
               completed_count: completed.length,
               tasks_completed: session.tasksCompleted
+            })
+          }
+        ]
+      };
+    }
+    case "session_info": {
+      const { session } = await getStatus();
+      const pending = await listPending();
+      const sid = getSessionId();
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              status: "session_info",
+              session_id: sid,
+              session_status: session.status,
+              started: session.started,
+              active_minutes: session.activeMinutes,
+              tasks_completed: session.tasksCompleted,
+              queue_pending: pending.length,
+              current_task: session.currentTask || null,
+              cwd: process.cwd(),
+              message: `Groundcrew session ${sid} is ${session.status}. Tell the user: "Groundcrew active \u2014 session: ${sid}"`
             })
           }
         ]
