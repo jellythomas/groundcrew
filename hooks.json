@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "type": "command",
+        "bash": "mkdir -p .groundcrew && echo '{\"started\":\"'$(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ)'\",\"tasks_completed\":0,\"status\":\"active\"}' > .groundcrew/session.json",
+        "cwd": ".",
+        "timeoutSec": 5
+      }
+    ],
+    "sessionEnd": [
+      {
+        "type": "command",
+        "bash": "[ -f .groundcrew/session.json ] && node -e \"const fs=require('fs'),s=JSON.parse(fs.readFileSync('.groundcrew/session.json','utf8'));s.ended=new Date().toISOString();s.status='ended';fs.writeFileSync('.groundcrew/session.json',JSON.stringify(s,null,2));\" || true",
+        "cwd": ".",
+        "timeoutSec": 5
+      }
+    ],
+    "postToolUse": [
+      {
+        "type": "command",
+        "bash": "INPUT=$(cat); TOOL=$(echo \"$INPUT\" | jq -r '.toolName'); RESULT=$(echo \"$INPUT\" | jq -r '.toolResult.resultType'); [ -d .groundcrew ] && echo \"$(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ),$TOOL,$RESULT\" >> .groundcrew/tool-history.csv || true",
+        "cwd": ".",
+        "timeoutSec": 5
+      }
+    ]
+  }
+}

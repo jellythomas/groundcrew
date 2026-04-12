@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "groundcrew": {
+      "command": "node",
+      "args": ["server/dist/index.js"],
+      "env": {
+        "GROUNDCREW_TASK_TIMEOUT": "300000",
+        "GROUNDCREW_MAX_IDLE_RETRIES": "3",
+        "GROUNDCREW_HUMAN_DELAY_MIN": "2000",
+        "GROUNDCREW_HUMAN_DELAY_MAX": "6000"
+      }
+    }
+  }
+}

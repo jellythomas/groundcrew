@@ -1,0 +1,27 @@
+{
+  "name": "groundcrew-cli",
+  "version": "0.1.0",
+  "description": "CLI companion for Groundcrew — queue tasks, send feedback, monitor your Copilot agent from another terminal.",
+  "type": "module",
+  "bin": {
+    "groundcrew": "dist/index.js"
+  },
+  "scripts": {
+    "build": "esbuild src/index.ts --bundle --platform=node --target=node22 --format=esm --outfile=dist/index.js && echo '#!/usr/bin/env node' > dist/_tmp.js && echo \"import{createRequire}from'module';const require=createRequire(import.meta.url);\" >> dist/_tmp.js && cat dist/index.js >> dist/_tmp.js && mv dist/_tmp.js dist/index.js && chmod +x dist/index.js",
+    "dev": "tsx src/index.ts"
+  },
+  "keywords": ["copilot", "cli", "task-queue", "groundcrew", "autonomous"],
+  "author": "jellythomas",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jellythomas/groundcrew",
+    "directory": "cli"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.3",
+    "esbuild": "^0.25.4",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3"
+  }
+}
