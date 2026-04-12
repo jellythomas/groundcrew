@@ -402,8 +402,17 @@ var CHAT_COMMANDS = [
 ];
 function chatCompleter(line) {
   if (!line.startsWith("/")) return [[], line];
-  const matches = CHAT_COMMANDS.filter((c) => c.cmd.startsWith(line)).map((c) => c.cmd + " ");
-  return [matches, line];
+  const matches = CHAT_COMMANDS.filter((c) => c.cmd.startsWith(line));
+  if (matches.length === 1) {
+    return [[matches[0].cmd + " "], line];
+  }
+  if (matches.length > 1) {
+    const display = matches.map((c) => `${c.cmd.padEnd(14)} ${c.desc}`);
+    console.log();
+    display.forEach((d) => console.log(`  ${d}`));
+    return [matches.map((c) => c.cmd), line];
+  }
+  return [[], line];
 }
 async function chat(explicitSession) {
   const rl = readline.createInterface({
@@ -430,38 +439,43 @@ async function chat(explicitSession) {
   const projectName = path.basename(current.cwd);
   console.log(`
 ${bold("Groundcrew chat")} \u2014 ${cyan(current.id)} ${dim(`(${projectName})`)}`);
-  console.log(dim("Type tasks to queue. Press Tab to autocomplete commands."));
-  console.log(dim(`Use ${cyan('"""')} to start/end multiline input.
+  console.log(dim("Type tasks to queue. Press Tab for command suggestions."));
+  console.log(dim(`End a line with ${cyan("\\")} to continue on next line.
 `));
-  console.log(dim("  Commands:"));
+  console.log(dim("  Commands (Tab to autocomplete):"));
   for (const c of CHAT_COMMANDS) {
     console.log(dim(`    ${cyan(c.cmd.padEnd(14))} ${c.desc}`));
   }
   console.log();
-  let multilineBuffer = null;
+  let continuationBuffer = [];
+  rl.on("close", () => {
+    console.log(dim("\nBye."));
+    process.exit(0);
+  });
   const prompt = () => {
-    const prefix = multilineBuffer ? `${dim(`[${current.id}]`)} ${dim("...")} ` : `${dim(`[${current.id}]`)} ${bold(">")} `;
+    const isContinuation = continuationBuffer.length > 0;
+    const prefix = isContinuation ? `${dim(`[${current.id}]`)} ${dim("...")} ` : `${dim(`[${current.id}]`)} ${bold(">")} `;
     rl.question(prefix, async (line) => {
-      if (multilineBuffer !== null) {
-        if (line.trim() === '"""') {
-          const fullText = multilineBuffer.join("\n").trim();
-          multilineBuffer = null;
-          if (fullText) {
-            try {
-              await add(fullText, 0, current.dir);
-            } catch (err) {
-              console.error(red(err.message));
-            }
-          }
-          prompt();
-          return;
-        }
-        multilineBuffer.push(line);
+      if (line.endsWith("\\")) {
+        continuationBuffer.push(line.slice(0, -1));
         prompt();
         return;
       }
-      if (line.trim() === '"""') {
-        multilineBuffer = [];
+      if (continuationBuffer.length > 0) {
+        continuationBuffer.push(line);
+        const fullText = continuationBuffer.join("\n").trim();
+        continuationBuffer = [];
+        if (fullText) {
+          try {
+            if (fullText.startsWith("/")) {
+              await add(fullText, 0, current.dir);
+            } else {
+              await add(fullText, 0, current.dir);
+            }
+          } catch (err) {
+            console.error(red(err.message));
+          }
+        }
         prompt();
         return;
       }

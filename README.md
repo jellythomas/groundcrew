@@ -147,15 +147,13 @@ Session:
 
 **Tab completion:** Type `/` then Tab to see all commands. Type `/f` then Tab to autocomplete to `/feedback`.
 
-**Multiline input:** Use `"""` to start and end a block:
+**Multiline input:** End a line with `\` to continue on the next line:
 
 ```
-[a1b2c3d4] > """
-[a1b2c3d4] ... analyze this codebase:
-[a1b2c3d4] ... - check for security issues
-[a1b2c3d4] ... - suggest performance improvements
+[a1b2c3d4] > analyze this codebase:\
+[a1b2c3d4] ... - check for security issues\
+[a1b2c3d4] ... - suggest performance improvements\
 [a1b2c3d4] ... - identify missing tests
-[a1b2c3d4] ... """
 ✓ Queued
 ```
 
@@ -310,7 +308,7 @@ Inside `groundcrew chat`, these commands are available (with Tab completion):
 | `/queue` | Show pending tasks |
 | `/clear` | Clear pending tasks |
 | `/quit` | Exit chat |
-| `"""` | Start/end multiline input |
+| `\` (end of line) | Continue input on next line |
 
 ## MCP Tools
 

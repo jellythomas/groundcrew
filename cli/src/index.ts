@@ -523,10 +523,23 @@ const CHAT_COMMANDS: Array<{ cmd: string; desc: string }> = [
 
 function chatCompleter(line: string): [string[], string] {
   if (!line.startsWith("/")) return [[], line];
-  const matches = CHAT_COMMANDS
-    .filter((c) => c.cmd.startsWith(line))
-    .map((c) => c.cmd + " ");
-  return [matches, line];
+  const matches = CHAT_COMMANDS.filter((c) => c.cmd.startsWith(line));
+
+  if (matches.length === 1) {
+    // Single match — autocomplete the command
+    return [[matches[0].cmd + " "], line];
+  }
+
+  if (matches.length > 1) {
+    // Multiple matches — show commands with descriptions
+    const display = matches.map((c) => `${c.cmd.padEnd(14)} ${c.desc}`);
+    // Print descriptions above, return just command names for completion
+    console.log();
+    display.forEach((d) => console.log(`  ${d}`));
+    return [matches.map((c) => c.cmd), line];
+  }
+
+  return [[], line];
 }
 
 async function chat(explicitSession?: string): Promise<void> {
@@ -557,43 +570,53 @@ async function chat(explicitSession?: string): Promise<void> {
 
   const projectName = path.basename(current.cwd);
   console.log(`\n${bold("Groundcrew chat")} — ${cyan(current.id)} ${dim(`(${projectName})`)}`);
-  console.log(dim("Type tasks to queue. Press Tab to autocomplete commands."));
-  console.log(dim(`Use ${cyan('"""')} to start/end multiline input.\n`));
-  console.log(dim("  Commands:"));
+  console.log(dim("Type tasks to queue. Press Tab for command suggestions."));
+  console.log(dim(`End a line with ${cyan("\\")} to continue on next line.\n`));
+  console.log(dim("  Commands (Tab to autocomplete):"));
   for (const c of CHAT_COMMANDS) {
     console.log(dim(`    ${cyan(c.cmd.padEnd(14))} ${c.desc}`));
   }
   console.log();
 
-  let multilineBuffer: string[] | null = null;
+  let continuationBuffer: string[] = [];
+
+  // Handle Ctrl+C gracefully
+  rl.on("close", () => {
+    console.log(dim("\nBye."));
+    process.exit(0);
+  });
 
   const prompt = () => {
-    const prefix = multilineBuffer
+    const isContinuation = continuationBuffer.length > 0;
+    const prefix = isContinuation
       ? `${dim(`[${current!.id}]`)} ${dim("...")} `
       : `${dim(`[${current!.id}]`)} ${bold(">")} `;
 
     rl.question(prefix, async (line) => {
-      // Multiline mode
-      if (multilineBuffer !== null) {
-        if (line.trim() === '"""') {
-          // End multiline — join and process
-          const fullText = multilineBuffer.join("\n").trim();
-          multilineBuffer = null;
-          if (fullText) {
-            try {
-              await add(fullText, 0, current!.dir);
-            } catch (err: any) {
-              console.error(red(err.message));
-            }
-          }
-          prompt(); return;
-        }
-        multilineBuffer.push(line);
+      // Line continuation with backslash
+      if (line.endsWith("\\")) {
+        continuationBuffer.push(line.slice(0, -1));
         prompt(); return;
       }
 
-      if (line.trim() === '"""') {
-        multilineBuffer = [];
+      // If we were in continuation mode, join and process
+      if (continuationBuffer.length > 0) {
+        continuationBuffer.push(line);
+        const fullText = continuationBuffer.join("\n").trim();
+        continuationBuffer = [];
+        if (fullText) {
+          try {
+            if (fullText.startsWith("/")) {
+              // Process as command — use first line
+              // (multiline commands don't make sense, treat as task)
+              await add(fullText, 0, current!.dir);
+            } else {
+              await add(fullText, 0, current!.dir);
+            }
+          } catch (err: any) {
+            console.error(red(err.message));
+          }
+        }
         prompt(); return;
       }
 
