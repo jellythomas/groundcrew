@@ -14,6 +14,7 @@ import {
   markTaskDone,
   listPending,
   listCompleted,
+  cacheActiveTask,
 } from "./queue.js";
 import { getFeedback, initFeedbackFile } from "./feedback.js";
 import {
@@ -113,9 +114,16 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         type: "object" as const,
         properties: {
           task_id: { type: "string", description: "ID of the completed task." },
-          summary: { type: "string", description: "Brief summary of what was accomplished." },
+          summary: { type: "string", description: "Brief 1-2 sentence summary of what was accomplished." },
+          output: {
+            type: "string",
+            description:
+              "Full detailed output of the task — include your complete response, findings, " +
+              "code changes, analysis results, or any other deliverable. This is what the user " +
+              "will read when they run 'groundcrew history'. Be thorough.",
+          },
         },
-        required: ["task_id", "summary"],
+        required: ["task_id", "summary", "output"],
       },
     },
     {
@@ -206,6 +214,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       while (retries < MAX_IDLE_RETRIES) {
         const task = await getNextTask(timeout);
         if (task) {
+          cacheActiveTask(task);
           await updateSession({ status: "active", currentTask: task.id });
           const remaining = (await listPending()).length;
           return {
@@ -288,6 +297,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     case "mark_done": {
       const taskId = args?.task_id as string;
       const summary = args?.summary as string;
+      const output = args?.output as string | undefined;
 
       if (!taskId || !summary) {
         return {
@@ -298,7 +308,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
-      await markTaskDone(taskId, summary);
+      await markTaskDone(taskId, summary, output);
       await incrementCompleted();
 
       const pending = await listPending();

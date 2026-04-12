@@ -1,6 +1,6 @@
 import fs from "fs/promises";
 import { existsSync, watch, type FSWatcher } from "fs";
-import { getSessionDir, getQueueFile } from "./paths.js";
+import { getSessionDir, getQueueFile, getHistoryFile } from "./paths.js";
 
 export interface Task {
   id: string;
@@ -21,6 +21,7 @@ export interface CompletedTask {
   source: string;
   completedAt: string;
   summary: string;
+  output?: string;
 }
 
 function emptyQueue(): QueueData {
@@ -134,18 +135,45 @@ export async function getNextTask(timeoutMs: number): Promise<Task | null> {
 
 export async function markTaskDone(
   taskId: string,
-  summary: string
+  summary: string,
+  output?: string
 ): Promise<void> {
   const queue = await readQueue();
+
+  // Find original task info from completed or check if it was already moved
+  // The task was shifted from tasks[] in getNextTask, so check completed for prior entries
+  // or use the taskId to reconstruct. We store original task text via setActiveTask.
   const completed: CompletedTask = {
     id: taskId,
-    task: "",
-    source: "",
+    task: activeTaskCache.get(taskId)?.task || "",
+    source: activeTaskCache.get(taskId)?.source || "user",
     completedAt: new Date().toISOString(),
     summary,
+    ...(output ? { output } : {}),
   };
+  activeTaskCache.delete(taskId);
   queue.completed.push(completed);
   await writeQueue(queue);
+
+  // Also append to project-level history (persists across sessions)
+  await appendHistory(completed);
+}
+
+async function appendHistory(entry: CompletedTask): Promise<void> {
+  const histFile = getHistoryFile();
+  let history: CompletedTask[] = [];
+  try {
+    history = JSON.parse(await fs.readFile(histFile, "utf-8"));
+  } catch { /* first entry */ }
+  history.push(entry);
+  await fs.writeFile(histFile, JSON.stringify(history, null, 2));
+}
+
+// Cache active tasks so we can preserve original prompt on completion
+const activeTaskCache = new Map<string, { task: string; source: string }>();
+
+export function cacheActiveTask(task: Task): void {
+  activeTaskCache.set(task.id, { task: task.task, source: task.source });
 }
 
 export async function listPending(): Promise<Task[]> {

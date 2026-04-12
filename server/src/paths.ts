@@ -117,6 +117,10 @@ export function getGroundcrewDir(): string {
   return GROUNDCREW_DIR;
 }
 
+export function getHistoryFile(): string {
+  return path.join(GROUNDCREW_DIR, "history.json");
+}
+
 export function getActiveSessionsFile(): string {
   return ACTIVE_SESSION_FILE;
 }

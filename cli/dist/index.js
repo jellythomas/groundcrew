@@ -7,6 +7,7 @@ import path from "path";
 var GROUNDCREW_DIR = ".groundcrew";
 var SESSIONS_DIR = path.join(GROUNDCREW_DIR, "sessions");
 var ACTIVE_SESSIONS_FILE = path.join(GROUNDCREW_DIR, "active-sessions.json");
+var HISTORY_FILE = path.join(GROUNDCREW_DIR, "history.json");
 async function readActiveSessions() {
   try {
     return JSON.parse(await fs.readFile(ACTIVE_SESSIONS_FILE, "utf-8"));
@@ -172,17 +173,32 @@ async function clear(sessionDir) {
   await writeQueue(sessionDir, { tasks: [], completed: [] });
   console.log(green("Queue cleared."));
 }
-async function history(sessionDir) {
-  const queue = await readQueue(sessionDir);
-  if (queue.completed.length === 0) {
+async function history(_sessionDir) {
+  let completed = [];
+  try {
+    completed = JSON.parse(await fs.readFile(HISTORY_FILE, "utf-8"));
+  } catch {
+  }
+  if (completed.length === 0) {
     console.log(dim("No completed tasks yet."));
     return;
   }
-  console.log(bold(`Completed tasks (${queue.completed.length}):
+  console.log(bold(`Completed tasks (${completed.length}):
 `));
-  for (const task of queue.completed) {
-    console.log(`  ${green("done")} ${task.summary || task.task}`);
-    console.log(dim(`       ${task.completedAt} | ${task.id}`));
+  for (const task of completed) {
+    if (task.task) {
+      console.log(`  ${cyan("task")}  ${task.task}`);
+    }
+    console.log(`  ${green("done")}  ${task.summary}`);
+    if (task.output) {
+      console.log(`  ${dim("\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500")}`);
+      for (const line of task.output.split("\n")) {
+        console.log(`  ${dim("\u2502")} ${line}`);
+      }
+      console.log(`  ${dim("\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500")}`);
+    }
+    console.log(dim(`        ${task.completedAt} | ${task.source} | ${task.id}`));
+    console.log();
   }
 }
 async function sessions() {
@@ -271,6 +287,9 @@ async function main() {
     case "sessions":
       await sessions();
       return;
+    case "history":
+      await history();
+      return;
     case "help":
     case "--help":
     case "-h":
@@ -317,9 +336,6 @@ async function main() {
       break;
     case "status":
       await status(sessionDir);
-      break;
-    case "history":
-      await history(sessionDir);
       break;
     case "clear":
       await clear(sessionDir);
