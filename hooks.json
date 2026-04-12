@@ -4,7 +4,7 @@
     "sessionStart": [
       {
         "type": "command",
-        "bash": "mkdir -p .groundcrew && echo '{\"started\":\"'$(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ)'\",\"tasks_completed\":0,\"status\":\"active\"}' > .groundcrew/session.json",
+        "bash": "mkdir -p .groundcrew && echo '{\"started\":\"'$(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ)'\",\"tasks_completed\":0,\"status\":\"active\"}' > .groundcrew/session.json && echo \"$(pwd)\" > \"$HOME/.groundcrew-active-project\"",
         "cwd": ".",
         "timeoutSec": 5
       }

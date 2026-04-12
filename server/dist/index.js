@@ -13893,9 +13893,23 @@ import { watch } from "fs";
 
 // src/paths.ts
 import fs from "fs/promises";
+import { existsSync, readFileSync } from "fs";
 import path from "path";
 import crypto from "crypto";
-var GROUNDCREW_DIR = ".groundcrew";
+import os from "os";
+function resolveProjectDir() {
+  const markerFile = path.join(os.homedir(), ".groundcrew-active-project");
+  try {
+    const projectDir = readFileSync(markerFile, "utf-8").trim();
+    if (projectDir && existsSync(projectDir)) {
+      return projectDir;
+    }
+  } catch {
+  }
+  return process.cwd();
+}
+var PROJECT_DIR = resolveProjectDir();
+var GROUNDCREW_DIR = path.join(PROJECT_DIR, ".groundcrew");
 var SESSIONS_DIR = path.join(GROUNDCREW_DIR, "sessions");
 var ACTIVE_SESSION_FILE = path.join(GROUNDCREW_DIR, "active-sessions.json");
 var sessionId = null;
@@ -13911,9 +13925,8 @@ async function initSession() {
   activeSessions[sessionId] = {
     started: (/* @__PURE__ */ new Date()).toISOString(),
     pid: process.pid,
-    cwd: process.cwd()
+    cwd: PROJECT_DIR
   };
-  await fs.mkdir(GROUNDCREW_DIR, { recursive: true });
   await fs.writeFile(ACTIVE_SESSION_FILE, JSON.stringify(activeSessions, null, 2));
   return sessionId;
 }
@@ -14051,12 +14064,12 @@ async function listCompleted() {
 
 // src/feedback.ts
 import fs3 from "fs/promises";
-import { existsSync as existsSync2, watch as watch2 } from "fs";
+import { existsSync as existsSync3, watch as watch2 } from "fs";
 var lastFeedbackModified = 0;
 async function initFeedbackFile() {
   await fs3.mkdir(getSessionDir(), { recursive: true });
   const feedbackFile = getFeedbackFile();
-  if (!existsSync2(feedbackFile)) {
+  if (!existsSync3(feedbackFile)) {
     await fs3.writeFile(
       feedbackFile,
       "<!-- Write your feedback below. Save the file to send it to the agent. -->\n\n"
