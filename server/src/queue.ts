@@ -123,8 +123,8 @@ export async function getNextTask(timeoutMs: number): Promise<Task | null> {
       checkQueue();
     });
 
-    // Also poll every 2s as fallback (some fs watchers miss events)
-    poll = setInterval(() => { checkQueue(); }, 2000);
+    // Also poll every 1s as fallback (some fs watchers miss events)
+    poll = setInterval(() => { checkQueue(); }, 1000);
 
     timer = setTimeout(() => {
       cleanup();

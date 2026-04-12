@@ -27,8 +27,7 @@ import {
 import { initSession, cleanupSession, getSessionId } from "./paths.js";
 
 // Config from environment
-const TASK_TIMEOUT = parseInt(process.env.GROUNDCREW_TASK_TIMEOUT || "300000");
-const MAX_IDLE_RETRIES = parseInt(process.env.GROUNDCREW_MAX_IDLE_RETRIES || "3");
+const SESSION_TIMEOUT = parseInt(process.env.GROUNDCREW_SESSION_TIMEOUT || "5400000"); // 90 min default
 const FEEDBACK_TIMEOUT = 30000; // 30s for mid-task feedback checks
 
 const GROUNDCREW_INSTRUCTIONS = `
@@ -73,17 +72,17 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: "get_task",
       description:
-        "Get the next task from the Groundcrew queue. Blocks until a task is available. " +
+        "Get the next task from the Groundcrew queue. Blocks until a task is available (polls every 1s). " +
         "PROTOCOL: This is the core of the Groundcrew loop. After you finish executing a task " +
         "and call mark_done, you MUST call get_task again to continue. Never stop the loop " +
-        "unless get_task returns queue_empty with retries exhausted, or the user says 'stop'. " +
+        "unless get_task returns queue_empty with timeout exhausted, or the user says 'stop'. " +
         "Between major steps of a task, call get_feedback to check for user corrections.",
       inputSchema: {
         type: "object" as const,
         properties: {
           timeout_ms: {
             type: "number",
-            description: "How long to wait for a task in milliseconds. Default: 300000 (5 min).",
+            description: "How long to wait for a task in milliseconds. Default: 5400000 (90 min). Configurable via GROUNDCREW_SESSION_TIMEOUT env var.",
           },
         },
       },
@@ -208,43 +207,33 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
   switch (name) {
     case "get_task": {
-      const timeout = (args?.timeout_ms as number) || TASK_TIMEOUT;
-      let retries = 0;
+      const timeout = (args?.timeout_ms as number) || SESSION_TIMEOUT;
+      const task = await getNextTask(timeout);
 
-      while (retries < MAX_IDLE_RETRIES) {
-        const task = await getNextTask(timeout);
-        if (task) {
-          cacheActiveTask(task);
-          await updateSession({ status: "active", currentTask: task.id });
-          const remaining = (await listPending()).length;
-          return {
-            content: [
-              {
-                type: "text" as const,
-                text: JSON.stringify({
-                  status: "task_available",
-                  session_id: getSessionId(),
-                  task_id: task.id,
-                  task: task.task,
-                  source: task.source,
-                  priority: task.priority,
-                  queue_remaining: remaining,
-                  next_action: "Execute this task fully. Use get_feedback between major steps. When done, call mark_done with a summary, then call get_task for the next task.",
-                }),
-              },
-            ],
-          };
-        }
-        retries++;
-        if (retries < MAX_IDLE_RETRIES) {
-          // Backoff: 30s, 2min, 5min
-          const backoff = [30000, 120000, 300000][retries - 1] || 300000;
-          await new Promise((r) => setTimeout(r, Math.min(backoff, 5000)));
-          // Re-check immediately after short backoff, the real wait was in getNextTask
-        }
+      if (task) {
+        cacheActiveTask(task);
+        await updateSession({ status: "active", currentTask: task.id });
+        const remaining = (await listPending()).length;
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify({
+                status: "task_available",
+                session_id: getSessionId(),
+                task_id: task.id,
+                task: task.task,
+                source: task.source,
+                priority: task.priority,
+                queue_remaining: remaining,
+                next_action: "Execute this task fully. Use get_feedback between major steps. When done, call mark_done with a summary, then call get_task for the next task.",
+              }),
+            },
+          ],
+        };
       }
 
-      // All retries exhausted — park
+      // Timeout exhausted — park
       await parkSession();
       return {
         content: [
@@ -253,10 +242,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             text: JSON.stringify({
               status: "queue_empty",
               message:
-                "All tasks complete. Groundcrew parked. " +
-                "Tell the user: 'Groundcrew parked — add tasks with `groundcrew add` then type `continue` to resume.'",
+                "Session timed out after " + Math.round(timeout / 60000) + " minutes with no tasks. " +
+                "Groundcrew parked. Tell the user: 'Groundcrew parked — add tasks with `groundcrew add` or `groundcrew chat`, then type `continue` to resume.'",
               next_action: "Stop and wait. Do NOT call get_task again until the user says 'continue'.",
-              retries_exhausted: MAX_IDLE_RETRIES,
             }),
           },
         ],
