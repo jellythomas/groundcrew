@@ -76,10 +76,13 @@ That's it. One command installs everything — MCP server, agent, skill, hooks, 
 
 ### Set Up the CLI Companion
 
-Install the CLI globally from npm:
-
 ```bash
+# Install the CLI globally
 npm install -g groundcrew-cli
+
+# Initialize groundcrew in your project (one-time setup)
+cd your-project
+groundcrew init
 ```
 
 ### Verify
@@ -97,16 +100,12 @@ groundcrew --help
 ### Quick Start
 
 ```bash
-# Terminal 1: Start Copilot
-copilot
-
-# Tell it to use groundcrew
-> "Read the PRD at docs/feature.md, create a plan, and execute it with groundcrew"
+# Start Copilot in groundcrew mode — auto-creates session and enters the task loop
+copilot groundcrew
 ```
 
 ```bash
-# Terminal 2: Manage the queue
-groundcrew init
+# From another terminal: manage the queue
 groundcrew add "build the user registration endpoint"
 groundcrew add "add input validation"
 groundcrew add "write integration tests"
@@ -190,14 +189,6 @@ $ groundcrew feedback --session a1b2c3d4 "use Redis for rate limit store"
 Without `--session`, commands auto-target the most recent active session.
 
 ## CLI Reference
-
-### `groundcrew init`
-
-Initialize a `.groundcrew/` directory in the current project. Creates the queue file and feedback file.
-
-```bash
-groundcrew init
-```
 
 ### `groundcrew add <task>`
 
