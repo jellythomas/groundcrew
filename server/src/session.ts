@@ -99,6 +99,10 @@ export async function parkSession(): Promise<void> {
   await updateSession({ status: "parked", currentTask: undefined });
 }
 
+export async function endSession(): Promise<void> {
+  await updateSession({ status: "ended", currentTask: undefined });
+}
+
 export async function getStatus(): Promise<{
   session: SessionData;
   reports: StatusReport[];

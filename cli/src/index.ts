@@ -355,6 +355,28 @@ async function killSession(sessionDir: string, sessionId: string): Promise<void>
   await stopSession(sessionDir, sessionId);
 }
 
+async function stopOne(sessionId: string): Promise<void> {
+  const dir = path.join(SESSIONS_DIR, sessionId);
+  if (!existsSync(dir)) {
+    console.log(red(`Session "${sessionId}" not found.`));
+    return;
+  }
+  console.log(`  ${yellow("stopping")} ${cyan(sessionId)}`);
+  await killSession(dir, sessionId);
+  console.log(`  ${green("stopped")}  ${cyan(sessionId)}`);
+}
+
+async function destroyOne(sessionId: string): Promise<void> {
+  const dir = path.join(SESSIONS_DIR, sessionId);
+  if (!existsSync(dir)) {
+    console.log(red(`Session "${sessionId}" not found.`));
+    return;
+  }
+  await killSession(dir, sessionId);
+  await fs.rm(dir, { recursive: true, force: true });
+  console.log(green(`Session ${sessionId} destroyed.`));
+}
+
 async function stopAll(): Promise<void> {
   const active = await readActiveSessions();
   const ids = Object.keys(active);
@@ -670,7 +692,9 @@ ${bold("Usage:")}
   groundcrew history                           Show completed tasks
   groundcrew clear                             Clear all pending tasks
   groundcrew stop                              Stop all active sessions
-  groundcrew destroy                            Delete all sessions, history, and data
+  groundcrew stop --session <id>               Stop a specific session
+  groundcrew destroy                           Delete all sessions, history, and data
+  groundcrew destroy --session <id>            Delete a specific session
 
 ${bold("Session targeting:")}
   Most commands auto-detect the active session. If multiple sessions
@@ -721,10 +745,18 @@ async function main(): Promise<void> {
       return;
     case "stop":
     case "kill":
-      await stopAll();
+      if (explicitSession) {
+        await stopOne(explicitSession);
+      } else {
+        await stopAll();
+      }
       return;
     case "destroy":
-      await destroyAll();
+      if (explicitSession) {
+        await destroyOne(explicitSession);
+      } else {
+        await destroyAll();
+      }
       return;
     case "help":
     case "--help":

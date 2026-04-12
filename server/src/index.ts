@@ -21,6 +21,7 @@ import {
   reportStatus,
   incrementCompleted,
   parkSession,
+  endSession,
   getStatus,
   updateSession,
 } from "./session.js";
@@ -233,18 +234,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
-      // Timeout exhausted — park
-      await parkSession();
+      // Timeout exhausted — end session and clean up
+      await endSession();
+      await cleanupSession();
       return {
         content: [
           {
             type: "text" as const,
             text: JSON.stringify({
-              status: "queue_empty",
+              status: "session_ended",
               message:
                 "Session timed out after " + Math.round(timeout / 60000) + " minutes with no tasks. " +
-                "Groundcrew parked. Tell the user: 'Groundcrew parked — add tasks with `groundcrew add` or `groundcrew chat`, then type `continue` to resume.'",
-              next_action: "Stop and wait. Do NOT call get_task again until the user says 'continue'.",
+                "Session ended and cleaned up. Tell the user: 'Groundcrew session ended — start a new session to continue.'",
+              next_action: "Stop. Session is over.",
             }),
           },
         ],
