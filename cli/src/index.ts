@@ -320,6 +320,99 @@ async function sessions(): Promise<void> {
   }
 }
 
+// ── Session Management ───────────────────────────────────────────────────────
+
+async function stopSession(sessionDir: string, sessionId: string): Promise<void> {
+  // Mark session as ended
+  try {
+    const sessionFile = path.join(sessionDir, "session.json");
+    const session = JSON.parse(await fs.readFile(sessionFile, "utf-8"));
+    session.status = "ended";
+    session.ended = new Date().toISOString();
+    await fs.writeFile(sessionFile, JSON.stringify(session, null, 2));
+  } catch { /* best effort */ }
+
+  // Remove from active sessions
+  try {
+    const active = await readActiveSessions();
+    delete active[sessionId];
+    await fs.writeFile(ACTIVE_SESSIONS_FILE, JSON.stringify(active, null, 2));
+  } catch { /* best effort */ }
+}
+
+async function killSession(sessionDir: string, sessionId: string): Promise<void> {
+  // Try to kill the MCP server process
+  const active = await readActiveSessions();
+  const entry = active[sessionId];
+  if (entry?.pid) {
+    try {
+      process.kill(entry.pid, "SIGTERM");
+      console.log(dim(`  Sent SIGTERM to PID ${entry.pid}`));
+    } catch {
+      // Process already gone
+    }
+  }
+  await stopSession(sessionDir, sessionId);
+}
+
+async function stopAll(): Promise<void> {
+  const active = await readActiveSessions();
+  const ids = Object.keys(active);
+
+  let allDirs: string[] = [];
+  try { allDirs = await fs.readdir(SESSIONS_DIR); } catch {}
+
+  if (ids.length === 0 && allDirs.length === 0) {
+    console.log(dim("No sessions to stop."));
+    return;
+  }
+
+  // Kill active sessions (have PIDs)
+  for (const id of ids) {
+    const dir = path.join(SESSIONS_DIR, id);
+    console.log(`  ${yellow("stopping")} ${cyan(id)}`);
+    await killSession(dir, id);
+    console.log(`  ${green("stopped")}  ${cyan(id)}`);
+  }
+
+  // Mark any orphaned session dirs as ended
+  for (const dir of allDirs) {
+    if (!ids.includes(dir)) {
+      const sessionDir = path.join(SESSIONS_DIR, dir);
+      await stopSession(sessionDir, dir);
+      console.log(`  ${green("cleaned")}  ${cyan(dir)} ${dim("(orphaned)")}`);
+    }
+  }
+
+  // Clear active sessions file
+  await fs.writeFile(ACTIVE_SESSIONS_FILE, "{}");
+  console.log(green("\nAll sessions stopped."));
+}
+
+async function destroyAll(): Promise<void> {
+  // Stop everything first
+  await stopAll();
+
+  // Delete all session directories
+  try {
+    const dirs = await fs.readdir(SESSIONS_DIR);
+    for (const dir of dirs) {
+      await fs.rm(path.join(SESSIONS_DIR, dir), { recursive: true, force: true });
+    }
+  } catch { /* no sessions dir */ }
+
+  // Delete history
+  try { await fs.unlink(HISTORY_FILE); } catch {}
+
+  // Delete active sessions file
+  try { await fs.unlink(ACTIVE_SESSIONS_FILE); } catch {}
+
+  // Delete tool history
+  try { await fs.unlink(path.join(GROUNDCREW_DIR, "tool-history.csv")); } catch {}
+
+  console.log(green("All session data and history deleted."));
+}
+
 // ── Chat Mode ────────────────────────────────────────────────────────────────
 
 interface SessionChoice {
@@ -394,10 +487,31 @@ async function pickSession(rl: readline.Interface): Promise<SessionChoice | null
   });
 }
 
+const CHAT_COMMANDS: Array<{ cmd: string; desc: string }> = [
+  { cmd: "/feedback",  desc: "Send feedback to the agent mid-task" },
+  { cmd: "/priority",  desc: "Queue an urgent task (processed first)" },
+  { cmd: "/switch",    desc: "Switch to another active session" },
+  { cmd: "/sessions",  desc: "List all active sessions" },
+  { cmd: "/status",    desc: "Show current session status" },
+  { cmd: "/history",   desc: "Show completed tasks" },
+  { cmd: "/queue",     desc: "Show pending tasks" },
+  { cmd: "/clear",     desc: "Clear pending tasks" },
+  { cmd: "/quit",      desc: "Exit chat" },
+];
+
+function chatCompleter(line: string): [string[], string] {
+  if (!line.startsWith("/")) return [[], line];
+  const matches = CHAT_COMMANDS
+    .filter((c) => c.cmd.startsWith(line))
+    .map((c) => c.cmd + " ");
+  return [matches, line];
+}
+
 async function chat(explicitSession?: string): Promise<void> {
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
+    completer: chatCompleter,
   });
 
   let current: SessionChoice | null = null;
@@ -421,7 +535,12 @@ async function chat(explicitSession?: string): Promise<void> {
 
   const projectName = path.basename(current.cwd);
   console.log(`\n${bold("Groundcrew chat")} — ${cyan(current.id)} ${dim(`(${projectName})`)}`);
-  console.log(dim("Type tasks to queue. Commands: /feedback, /priority, /switch, /sessions, /status, /history, /quit\n"));
+  console.log(dim("Type tasks to queue. Press Tab to autocomplete commands.\n"));
+  console.log(dim("  Commands:"));
+  for (const c of CHAT_COMMANDS) {
+    console.log(dim(`    ${cyan(c.cmd.padEnd(14))} ${c.desc}`));
+  }
+  console.log();
 
   const prompt = () => {
     rl.question(`${dim(`[${current!.id}]`)} ${bold(">")} `, async (line) => {
@@ -500,9 +619,19 @@ async function chat(explicitSession?: string): Promise<void> {
           prompt(); return;
         }
 
+        if (trimmed === "/queue") {
+          await listQueueCmd(current!.dir);
+          prompt(); return;
+        }
+
+        if (trimmed === "/clear") {
+          await clear(current!.dir);
+          prompt(); return;
+        }
+
         if (trimmed.startsWith("/")) {
           console.log(red(`Unknown command: ${trimmed.split(" ")[0]}`));
-          console.log(dim("Commands: /feedback, /priority, /switch, /sessions, /status, /history, /quit"));
+          console.log(dim("  Press Tab to see available commands"));
           prompt(); return;
         }
 
@@ -540,6 +669,8 @@ ${bold("Usage:")}
   groundcrew sessions                          List all sessions
   groundcrew history                           Show completed tasks
   groundcrew clear                             Clear all pending tasks
+  groundcrew stop                              Stop all active sessions
+  groundcrew destroy                            Delete all sessions, history, and data
 
 ${bold("Session targeting:")}
   Most commands auto-detect the active session. If multiple sessions
@@ -587,6 +718,13 @@ async function main(): Promise<void> {
       return;
     case "history":
       await history();
+      return;
+    case "stop":
+    case "kill":
+      await stopAll();
+      return;
+    case "destroy":
+      await destroyAll();
       return;
     case "help":
     case "--help":
