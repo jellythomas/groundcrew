@@ -10,8 +10,6 @@
   "repository": "https://github.com/jellythomas/groundcrew",
   "keywords": ["queue", "autonomous", "feedback", "human-in-the-loop", "task-management", "productivity"],
   "category": "productivity",
-  "agents": "agents/",
-  "skills": ["skills/"],
   "hooks": "hooks.json",
   "mcpServers": ".mcp.json"
 }

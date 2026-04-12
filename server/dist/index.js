@@ -14208,7 +14208,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
     {
       name: "get_task",
-      description: "Get the next task from the queue. Blocks until a task is available or timeout. Call this after completing each task to get the next one. Returns null when queue is empty after all retries (agent should park).",
+      description: "Get the next task from the Groundcrew queue. Blocks until a task is available. PROTOCOL: This is the core of the Groundcrew loop. After you finish executing a task and call mark_done, you MUST call get_task again to continue. Never stop the loop unless get_task returns queue_empty with retries exhausted, or the user says 'stop'. Between major steps of a task, call get_feedback to check for user corrections.",
       inputSchema: {
         type: "object",
         properties: {
@@ -14221,7 +14221,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "get_feedback",
-      description: "Check for user feedback mid-task. Blocks briefly waiting for the user to write to .groundcrew/feedback.md. Returns null if no feedback within timeout. Call this between major steps of a task.",
+      description: "Check for user feedback mid-task. Blocks briefly. Returns null if no feedback. Call this between major steps of the current task to check if the user has corrections. If feedback is received, incorporate it immediately before continuing.",
       inputSchema: {
         type: "object",
         properties: {
@@ -14234,7 +14234,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "mark_done",
-      description: "Mark the current task as complete with a summary of what was done. Always call this after finishing a task, before calling get_task for the next one.",
+      description: "Mark the current task as complete. IMPORTANT: After calling this, you MUST call get_task immediately to continue processing the queue. Never stop between mark_done and the next get_task call.",
       inputSchema: {
         type: "object",
         properties: {
@@ -14262,7 +14262,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "populate_queue",
-      description: "Add multiple tasks to the queue at once. Use after decomposing a plan into steps. Tasks are added in order with normal priority.",
+      description: "Add multiple tasks to the queue at once. Use when decomposing a large task into steps. After populating, call get_task to begin processing.",
       inputSchema: {
         type: "object",
         properties: {
@@ -14285,7 +14285,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "session_info",
-      description: "Get the current Groundcrew session info. Call this when activating groundcrew to display the session ID to the user. Always call this first before any other groundcrew tool so the user knows which session they're on.",
+      description: "Get the current Groundcrew session info including session ID. Display the session ID to the user so they can target this session from another terminal with `groundcrew add --session <id>`.",
       inputSchema: {
         type: "object",
         properties: {}
@@ -14303,6 +14303,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const task = await getNextTask(timeout);
         if (task) {
           await updateSession({ status: "active", currentTask: task.id });
+          const remaining = (await listPending()).length;
           return {
             content: [
               {
@@ -14314,7 +14315,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                   task: task.task,
                   source: task.source,
                   priority: task.priority,
-                  queue_remaining: (await listPending()).length
+                  queue_remaining: remaining,
+                  next_action: "Execute this task fully. Use get_feedback between major steps. When done, call mark_done with a summary, then call get_task for the next task."
                 })
               }
             ]
@@ -14333,7 +14335,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             type: "text",
             text: JSON.stringify({
               status: "queue_empty",
-              message: "No tasks available after all retries. Session parked. User can add tasks with `groundcrew add` then type `continue` to resume.",
+              message: "All tasks complete. Groundcrew parked. Tell the user: 'Groundcrew parked \u2014 add tasks with `groundcrew add` then type `continue` to resume.'",
+              next_action: "Stop and wait. Do NOT call get_task again until the user says 'continue'.",
               retries_exhausted: MAX_IDLE_RETRIES
             })
           }
@@ -14390,7 +14393,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               status: "task_completed",
               task_id: taskId,
               queue_remaining: pending.length,
-              message: pending.length > 0 ? `Done. ${pending.length} task(s) remaining. Call get_task for the next one.` : "Done. Queue empty. Call get_task to wait for new tasks."
+              message: pending.length > 0 ? `Task completed. ${pending.length} task(s) remaining in queue.` : "Task completed. Queue empty.",
+              next_action: "Call get_task now to continue processing the queue."
             })
           }
         ]
@@ -14442,7 +14446,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               status: "queue_populated",
               tasks_added: tasks.length,
               task_ids: tasks.map((t) => t.id),
-              message: `Added ${tasks.length} tasks to queue. Call get_task to begin.`
+              next_action: `${tasks.length} tasks queued. Call get_task now to start processing.`
             })
           }
         ]
