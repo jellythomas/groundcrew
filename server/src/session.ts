@@ -1,13 +1,8 @@
 import fs from "fs/promises";
-import { existsSync } from "fs";
-import path from "path";
-import { ensureGroundcrewDir } from "./queue.js";
-
-const GROUNDCREW_DIR = ".groundcrew";
-const SESSION_FILE = path.join(GROUNDCREW_DIR, "session.json");
-const STATUS_FILE = path.join(GROUNDCREW_DIR, "status.json");
+import { getSessionDir, getSessionFile, getStatusFile } from "./paths.js";
 
 export interface SessionData {
+  sessionId: string;
   started: string;
   tasksCompleted: number;
   status: "active" | "parked" | "ended";
@@ -25,10 +20,11 @@ export interface StatusReport {
 
 export async function readSession(): Promise<SessionData> {
   try {
-    const raw = await fs.readFile(SESSION_FILE, "utf-8");
+    const raw = await fs.readFile(getSessionFile(), "utf-8");
     return JSON.parse(raw) as SessionData;
   } catch {
     return {
+      sessionId: "",
       started: new Date().toISOString(),
       tasksCompleted: 0,
       status: "active",
@@ -39,7 +35,7 @@ export async function readSession(): Promise<SessionData> {
 export async function updateSession(
   updates: Partial<SessionData>
 ): Promise<SessionData> {
-  await ensureGroundcrewDir();
+  await fs.mkdir(getSessionDir(), { recursive: true });
   const session = await readSession();
   Object.assign(session, updates, { lastActivity: new Date().toISOString() });
 
@@ -49,7 +45,7 @@ export async function updateSession(
     (Date.now() - startTime) / (1000 * 60)
   );
 
-  await fs.writeFile(SESSION_FILE, JSON.stringify(session, null, 2));
+  await fs.writeFile(getSessionFile(), JSON.stringify(session, null, 2));
   return session;
 }
 
@@ -58,7 +54,7 @@ export async function reportStatus(
   message: string,
   progress?: string
 ): Promise<{ session: SessionData; warning?: string }> {
-  await ensureGroundcrewDir();
+  await fs.mkdir(getSessionDir(), { recursive: true });
 
   const report: StatusReport = {
     taskId,
@@ -70,13 +66,13 @@ export async function reportStatus(
   // Append to status log
   let reports: StatusReport[] = [];
   try {
-    const raw = await fs.readFile(STATUS_FILE, "utf-8");
+    const raw = await fs.readFile(getStatusFile(), "utf-8");
     reports = JSON.parse(raw);
   } catch {
     // Fresh file
   }
   reports.push(report);
-  await fs.writeFile(STATUS_FILE, JSON.stringify(reports, null, 2));
+  await fs.writeFile(getStatusFile(), JSON.stringify(reports, null, 2));
 
   // Update session
   const session = await updateSession({ currentTask: taskId });
@@ -110,7 +106,7 @@ export async function getStatus(): Promise<{
   const session = await readSession();
   let reports: StatusReport[] = [];
   try {
-    const raw = await fs.readFile(STATUS_FILE, "utf-8");
+    const raw = await fs.readFile(getStatusFile(), "utf-8");
     reports = JSON.parse(raw);
   } catch {
     // No reports yet

@@ -1,6 +1,6 @@
 import fs from "fs/promises";
 import { existsSync, watch, type FSWatcher } from "fs";
-import path from "path";
+import { getSessionDir, getQueueFile } from "./paths.js";
 
 export interface Task {
   id: string;
@@ -23,22 +23,13 @@ export interface CompletedTask {
   summary: string;
 }
 
-const GROUNDCREW_DIR = ".groundcrew";
-const QUEUE_FILE = path.join(GROUNDCREW_DIR, "queue.json");
-
 function emptyQueue(): QueueData {
   return { tasks: [], completed: [] };
 }
 
-export async function ensureGroundcrewDir(): Promise<void> {
-  if (!existsSync(GROUNDCREW_DIR)) {
-    await fs.mkdir(GROUNDCREW_DIR, { recursive: true });
-  }
-}
-
 export async function readQueue(): Promise<QueueData> {
   try {
-    const raw = await fs.readFile(QUEUE_FILE, "utf-8");
+    const raw = await fs.readFile(getQueueFile(), "utf-8");
     return JSON.parse(raw) as QueueData;
   } catch {
     return emptyQueue();
@@ -46,8 +37,8 @@ export async function readQueue(): Promise<QueueData> {
 }
 
 async function writeQueue(data: QueueData): Promise<void> {
-  await ensureGroundcrewDir();
-  await fs.writeFile(QUEUE_FILE, JSON.stringify(data, null, 2));
+  await fs.mkdir(getSessionDir(), { recursive: true });
+  await fs.writeFile(getQueueFile(), JSON.stringify(data, null, 2));
 }
 
 export async function addTask(
@@ -64,7 +55,6 @@ export async function addTask(
     createdAt: new Date().toISOString(),
   };
   queue.tasks.push(task);
-  // Sort by priority descending (9 = urgent, 0 = normal)
   queue.tasks.sort((a, b) => b.priority - a.priority);
   await writeQueue(queue);
   return task;
@@ -89,6 +79,8 @@ export async function populateQueue(
 }
 
 export async function getNextTask(timeoutMs: number): Promise<Task | null> {
+  const queueFile = getQueueFile();
+
   // Check queue immediately
   const queue = await readQueue();
   if (queue.tasks.length > 0) {
@@ -97,14 +89,19 @@ export async function getNextTask(timeoutMs: number): Promise<Task | null> {
     return task;
   }
 
+  // Ensure the queue file exists for watching
+  await fs.writeFile(queueFile, JSON.stringify(emptyQueue()), { flag: "wx" }).catch(() => {});
+
   // Block — watch for file changes
   return new Promise<Task | null>((resolve) => {
     let watcher: FSWatcher | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let poll: ReturnType<typeof setInterval> | undefined;
 
     const cleanup = () => {
       watcher?.close();
       if (timer) clearTimeout(timer);
+      if (poll) clearInterval(poll);
     };
 
     const checkQueue = async () => {
@@ -121,34 +118,17 @@ export async function getNextTask(timeoutMs: number): Promise<Task | null> {
       }
     };
 
-    // Ensure the queue file exists for watching
-    ensureGroundcrewDir()
-      .then(() =>
-        fs.writeFile(QUEUE_FILE, JSON.stringify(emptyQueue()), { flag: "wx" }).catch(() => {})
-      )
-      .then(() => {
-        watcher = watch(QUEUE_FILE, { persistent: true }, () => {
-          checkQueue();
-        });
+    watcher = watch(queueFile, { persistent: true }, () => {
+      checkQueue();
+    });
 
-        // Also poll every 2s as fallback (some fs watchers miss events)
-        const poll = setInterval(() => {
-          checkQueue().then((/* void */) => {
-            // If resolved, stop polling
-          });
-        }, 2000);
+    // Also poll every 2s as fallback (some fs watchers miss events)
+    poll = setInterval(() => { checkQueue(); }, 2000);
 
-        timer = setTimeout(() => {
-          cleanup();
-          clearInterval(poll);
-          resolve(null);
-        }, timeoutMs);
-
-        // Store poll interval for cleanup
-        const origCleanup = cleanup;
-        (cleanup as any).__poll = poll;
-        watcher.on("close", () => clearInterval(poll));
-      });
+    timer = setTimeout(() => {
+      cleanup();
+      resolve(null);
+    }, timeoutMs);
   });
 }
 

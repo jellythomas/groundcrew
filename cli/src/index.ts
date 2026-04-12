@@ -3,10 +3,8 @@ import { existsSync } from "fs";
 import path from "path";
 
 const GROUNDCREW_DIR = ".groundcrew";
-const QUEUE_FILE = path.join(GROUNDCREW_DIR, "queue.json");
-const FEEDBACK_FILE = path.join(GROUNDCREW_DIR, "feedback.md");
-const SESSION_FILE = path.join(GROUNDCREW_DIR, "session.json");
-const STATUS_FILE = path.join(GROUNDCREW_DIR, "status.json");
+const SESSIONS_DIR = path.join(GROUNDCREW_DIR, "sessions");
+const ACTIVE_SESSIONS_FILE = path.join(GROUNDCREW_DIR, "active-sessions.json");
 
 interface Task {
   id: string;
@@ -26,25 +24,104 @@ interface QueueData {
   }>;
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+interface ActiveSessionEntry {
+  started: string;
+  pid: number;
+  cwd: string;
+}
 
-async function ensureDir(): Promise<void> {
-  if (!existsSync(GROUNDCREW_DIR)) {
-    await fs.mkdir(GROUNDCREW_DIR, { recursive: true });
+// ── Session Resolution ───────────────────────────────────────────────────────
+
+async function readActiveSessions(): Promise<Record<string, ActiveSessionEntry>> {
+  try {
+    return JSON.parse(await fs.readFile(ACTIVE_SESSIONS_FILE, "utf-8"));
+  } catch {
+    return {};
   }
 }
 
-async function readQueue(): Promise<QueueData> {
+/**
+ * Resolve which session to target.
+ * Priority: --session flag > single active session > error if ambiguous.
+ */
+async function resolveSessionDir(explicitSession?: string): Promise<string> {
+  if (explicitSession) {
+    const dir = path.join(SESSIONS_DIR, explicitSession);
+    if (!existsSync(dir)) {
+      throw new Error(`Session "${explicitSession}" not found.`);
+    }
+    return dir;
+  }
+
+  const sessions = await readActiveSessions();
+  const ids = Object.keys(sessions);
+
+  if (ids.length === 0) {
+    // Fallback: check if any session dirs exist (server may have exited without cleanup)
+    try {
+      const dirs = await fs.readdir(SESSIONS_DIR);
+      if (dirs.length === 1) return path.join(SESSIONS_DIR, dirs[0]);
+      if (dirs.length > 1) {
+        // Pick most recently modified
+        let latest = { dir: dirs[0], mtime: 0 };
+        for (const d of dirs) {
+          try {
+            const stat = await fs.stat(path.join(SESSIONS_DIR, d, "session.json"));
+            if (stat.mtimeMs > latest.mtime) {
+              latest = { dir: d, mtime: stat.mtimeMs };
+            }
+          } catch { /* skip */ }
+        }
+        return path.join(SESSIONS_DIR, latest.dir);
+      }
+    } catch { /* no sessions dir */ }
+    throw new Error("No active sessions. Start Copilot with groundcrew first.");
+  }
+
+  if (ids.length === 1) {
+    return path.join(SESSIONS_DIR, ids[0]);
+  }
+
+  // Multiple sessions — pick latest
+  let latest = { id: ids[0], time: 0 };
+  for (const id of ids) {
+    const started = new Date(sessions[id].started).getTime();
+    if (started > latest.time) {
+      latest = { id, time: started };
+    }
+  }
+  return path.join(SESSIONS_DIR, latest.id);
+}
+
+function sessionQueueFile(sessionDir: string): string {
+  return path.join(sessionDir, "queue.json");
+}
+
+function sessionFeedbackFile(sessionDir: string): string {
+  return path.join(sessionDir, "feedback.md");
+}
+
+function sessionSessionFile(sessionDir: string): string {
+  return path.join(sessionDir, "session.json");
+}
+
+function sessionStatusFile(sessionDir: string): string {
+  return path.join(sessionDir, "status.json");
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+async function readQueue(sessionDir: string): Promise<QueueData> {
   try {
-    return JSON.parse(await fs.readFile(QUEUE_FILE, "utf-8"));
+    return JSON.parse(await fs.readFile(sessionQueueFile(sessionDir), "utf-8"));
   } catch {
     return { tasks: [], completed: [] };
   }
 }
 
-async function writeQueue(data: QueueData): Promise<void> {
-  await ensureDir();
-  await fs.writeFile(QUEUE_FILE, JSON.stringify(data, null, 2));
+async function writeQueue(sessionDir: string, data: QueueData): Promise<void> {
+  await fs.mkdir(sessionDir, { recursive: true });
+  await fs.writeFile(sessionQueueFile(sessionDir), JSON.stringify(data, null, 2));
 }
 
 function color(code: number, text: string): string {
@@ -61,21 +138,12 @@ const red = (t: string) => color(31, t);
 // ── Commands ──────────────────────────────────────────────────────────────────
 
 async function init(): Promise<void> {
-  await ensureDir();
-  if (!existsSync(QUEUE_FILE)) {
-    await writeQueue({ tasks: [], completed: [] });
-  }
-  if (!existsSync(FEEDBACK_FILE)) {
-    await fs.writeFile(
-      FEEDBACK_FILE,
-      "<!-- Write your feedback below. Save to send to agent. -->\n\n"
-    );
-  }
+  await fs.mkdir(SESSIONS_DIR, { recursive: true });
   console.log(green("Groundcrew initialized.") + ` ${dim(GROUNDCREW_DIR + "/ created")}`);
 }
 
-async function add(taskText: string, priority: number): Promise<void> {
-  const queue = await readQueue();
+async function add(taskText: string, priority: number, sessionDir: string): Promise<void> {
+  const queue = await readQueue(sessionDir);
   const task: Task = {
     id: `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     task: taskText,
@@ -85,28 +153,31 @@ async function add(taskText: string, priority: number): Promise<void> {
   };
   queue.tasks.push(task);
   queue.tasks.sort((a, b) => b.priority - a.priority);
-  await writeQueue(queue);
+  await writeQueue(sessionDir, queue);
 
+  const sid = path.basename(sessionDir);
   const label = priority > 0 ? red("[PRIORITY] ") : "";
   console.log(`${green("+")} ${label}${taskText} ${dim(`(${task.id})`)}`);
-  console.log(dim(`  Queue: ${queue.tasks.length} pending`));
+  console.log(dim(`  Session: ${sid} | Queue: ${queue.tasks.length} pending`));
 }
 
-async function feedback(message: string): Promise<void> {
-  await ensureDir();
-  await fs.writeFile(FEEDBACK_FILE, message + "\n");
-  console.log(`${green("Feedback sent.")} Agent will receive it on next check.`);
+async function feedback(message: string, sessionDir: string): Promise<void> {
+  await fs.mkdir(sessionDir, { recursive: true });
+  await fs.writeFile(sessionFeedbackFile(sessionDir), message + "\n");
+  const sid = path.basename(sessionDir);
+  console.log(`${green("Feedback sent.")} Agent will receive it on next check. ${dim(`(session: ${sid})`)}`);
 }
 
-async function listQueue(): Promise<void> {
-  const queue = await readQueue();
+async function listQueueCmd(sessionDir: string): Promise<void> {
+  const queue = await readQueue(sessionDir);
+  const sid = path.basename(sessionDir);
 
   if (queue.tasks.length === 0) {
-    console.log(dim("Queue is empty."));
+    console.log(dim(`Queue is empty. (session: ${sid})`));
     return;
   }
 
-  console.log(bold(`Pending tasks (${queue.tasks.length}):\n`));
+  console.log(bold(`Pending tasks (${queue.tasks.length}):`) + dim(` session: ${sid}\n`));
   for (const [i, task] of queue.tasks.entries()) {
     const pri = task.priority > 0 ? red(` [P${task.priority}]`) : "";
     console.log(`  ${cyan(`${i + 1}.`)}${pri} ${task.task}`);
@@ -118,14 +189,17 @@ async function listQueue(): Promise<void> {
   }
 }
 
-async function status(): Promise<void> {
+async function status(sessionDir: string): Promise<void> {
+  const sid = path.basename(sessionDir);
+
   // Session info
   try {
-    const session = JSON.parse(await fs.readFile(SESSION_FILE, "utf-8"));
+    const session = JSON.parse(await fs.readFile(sessionSessionFile(sessionDir), "utf-8"));
     const startTime = new Date(session.started).getTime();
     const minutes = Math.round((Date.now() - startTime) / 60000);
 
     console.log(bold("Session:"));
+    console.log(`  ID:        ${cyan(sid)}`);
     console.log(`  Status:    ${session.status === "active" ? green("active") : yellow(session.status)}`);
     console.log(`  Duration:  ${minutes}min`);
     console.log(`  Completed: ${session.tasksCompleted || 0} tasks`);
@@ -138,12 +212,12 @@ async function status(): Promise<void> {
   }
 
   // Queue info
-  const queue = await readQueue();
+  const queue = await readQueue(sessionDir);
   console.log(`\n${bold("Queue:")} ${queue.tasks.length} pending`);
 
   // Last status report
   try {
-    const reports = JSON.parse(await fs.readFile(STATUS_FILE, "utf-8"));
+    const reports = JSON.parse(await fs.readFile(sessionStatusFile(sessionDir), "utf-8"));
     if (reports.length > 0) {
       const last = reports[reports.length - 1];
       console.log(`\n${bold("Last update:")} ${last.message}`);
@@ -155,13 +229,13 @@ async function status(): Promise<void> {
   }
 }
 
-async function clear(): Promise<void> {
-  await writeQueue({ tasks: [], completed: [] });
+async function clear(sessionDir: string): Promise<void> {
+  await writeQueue(sessionDir, { tasks: [], completed: [] });
   console.log(green("Queue cleared."));
 }
 
-async function history(): Promise<void> {
-  const queue = await readQueue();
+async function history(sessionDir: string): Promise<void> {
+  const queue = await readQueue(sessionDir);
 
   if (queue.completed.length === 0) {
     console.log(dim("No completed tasks yet."));
@@ -175,6 +249,49 @@ async function history(): Promise<void> {
   }
 }
 
+async function sessions(): Promise<void> {
+  const active = await readActiveSessions();
+  const ids = Object.keys(active);
+
+  // Also check for session dirs that may not be in active-sessions.json
+  let allDirs: string[] = [];
+  try {
+    allDirs = await fs.readdir(SESSIONS_DIR);
+  } catch { /* no sessions */ }
+
+  if (ids.length === 0 && allDirs.length === 0) {
+    console.log(dim("No sessions found."));
+    return;
+  }
+
+  console.log(bold("Sessions:\n"));
+
+  for (const dir of allDirs) {
+    const isActive = ids.includes(dir);
+    const sessionDir = path.join(SESSIONS_DIR, dir);
+
+    let info = "";
+    try {
+      const session = JSON.parse(await fs.readFile(path.join(sessionDir, "session.json"), "utf-8"));
+      const startTime = new Date(session.started).getTime();
+      const minutes = Math.round((Date.now() - startTime) / 60000);
+      const statusColor = session.status === "active" ? green : session.status === "parked" ? yellow : dim;
+      info = `${statusColor(session.status)} | ${minutes}min | ${session.tasksCompleted || 0} tasks done`;
+    } catch {
+      info = dim("no session data");
+    }
+
+    const queue = await readQueue(sessionDir);
+    const marker = isActive ? green("*") : " ";
+
+    console.log(`  ${marker} ${cyan(dir)}  ${info} | ${queue.tasks.length} queued`);
+  }
+
+  if (ids.length > 0) {
+    console.log(dim(`\n  ${green("*")} = active (MCP server running)`));
+  }
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 function usage(): void {
@@ -182,36 +299,80 @@ function usage(): void {
 ${bold("groundcrew")} — CLI companion for the Groundcrew Copilot plugin
 
 ${bold("Usage:")}
-  groundcrew init                        Initialize .groundcrew/ in current dir
-  groundcrew add <task>                  Add a task to the queue
-  groundcrew add --priority <task>       Add an urgent task (processed first)
-  groundcrew feedback <message>          Send feedback to the agent mid-task
-  groundcrew queue                       List pending tasks
-  groundcrew status                      Show session status and last update
-  groundcrew history                     Show completed tasks
-  groundcrew clear                       Clear all pending tasks
+  groundcrew init                              Initialize .groundcrew/ in current dir
+  groundcrew add <task>                        Add a task to the queue
+  groundcrew add --priority <task>             Add an urgent task (processed first)
+  groundcrew add --session <id> <task>         Add to a specific session
+  groundcrew feedback <message>                Send feedback to the agent mid-task
+  groundcrew feedback --session <id> <message> Send feedback to a specific session
+  groundcrew queue                             List pending tasks
+  groundcrew status                            Show session status and last update
+  groundcrew sessions                          List all sessions
+  groundcrew history                           Show completed tasks
+  groundcrew clear                             Clear all pending tasks
+
+${bold("Session targeting:")}
+  Most commands auto-detect the active session. If multiple sessions
+  are running, use ${cyan("--session <id>")} to target a specific one.
+  Run ${cyan("groundcrew sessions")} to see all session IDs.
 
 ${bold("How it works:")}
   1. Start Copilot CLI with groundcrew plugin installed
   2. Give it an initial task or say "start groundcrew"
   3. Open another terminal and use this CLI to queue tasks and send feedback
   4. The agent processes tasks from the queue autonomously
+  5. Each Copilot session gets its own isolated queue
 
 ${bold("Install:")}
-  copilot plugin install jellythomas/groundcrew   ${dim("# the Copilot plugin")}
-  npm install -g groundcrew-cli                   ${dim("# this CLI companion")}
+  copilot plugin install jellythomas/groundcrew
 `);
 }
 
+function extractFlag(args: string[], flag: string): { value: string | undefined; remaining: string[] } {
+  const idx = args.indexOf(flag);
+  if (idx === -1) return { value: undefined, remaining: args };
+  const value = args[idx + 1];
+  const remaining = [...args.slice(0, idx), ...args.slice(idx + 2)];
+  return { value, remaining };
+}
+
 async function main(): Promise<void> {
-  const args = process.argv.slice(2);
+  const rawArgs = process.argv.slice(2);
+
+  // Extract --session flag from anywhere in args
+  const { value: explicitSession, remaining: args } = extractFlag(rawArgs, "--session");
+
   const command = args[0];
 
+  // Commands that don't need a session
   switch (command) {
     case "init":
       await init();
-      break;
+      return;
+    case "sessions":
+      await sessions();
+      return;
+    case "help":
+    case "--help":
+    case "-h":
+    case undefined:
+      usage();
+      return;
+  }
 
+  // Commands that need a session
+  let sessionDir: string;
+  try {
+    sessionDir = await resolveSessionDir(explicitSession);
+  } catch (err: any) {
+    console.error(red(err.message));
+    if (!explicitSession) {
+      console.error(dim("  Run 'groundcrew sessions' to see available sessions."));
+    }
+    process.exit(1);
+  }
+
+  switch (command) {
     case "add": {
       const hasPriority = args.includes("--priority") || args.includes("-p");
       const taskParts = args
@@ -225,7 +386,7 @@ async function main(): Promise<void> {
         process.exit(1);
       }
 
-      await add(taskText, hasPriority ? 9 : 0);
+      await add(taskText, hasPriority ? 9 : 0, sessionDir);
       break;
     }
 
@@ -236,32 +397,25 @@ async function main(): Promise<void> {
         console.error(dim("  groundcrew feedback \"use bcrypt not argon2\""));
         process.exit(1);
       }
-      await feedback(msg);
+      await feedback(msg, sessionDir);
       break;
     }
 
     case "queue":
     case "list":
-      await listQueue();
+      await listQueueCmd(sessionDir);
       break;
 
     case "status":
-      await status();
+      await status(sessionDir);
       break;
 
     case "history":
-      await history();
+      await history(sessionDir);
       break;
 
     case "clear":
-      await clear();
-      break;
-
-    case "help":
-    case "--help":
-    case "-h":
-    case undefined:
-      usage();
+      await clear(sessionDir);
       break;
 
     default:
