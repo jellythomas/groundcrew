@@ -33,20 +33,19 @@ const FEEDBACK_TIMEOUT = 30000; // 30s for mid-task feedback checks
 const GROUNDCREW_INSTRUCTIONS = `
 ## Groundcrew — Autonomous Task Queue for Claude Code
 
-Groundcrew lets users send tasks to this session from another terminal while you work.
+CRITICAL ACTIVATION RULE:
+When the user's message contains the word "groundcrew" in ANY context — including
+"use groundcrew", "using groundcrew", "with groundcrew", "via groundcrew", or
+"groundcrew" as part of a larger request — you MUST call the "start" tool FIRST,
+BEFORE doing anything else. This is NOT optional. Do NOT interpret "use groundcrew"
+as merely describing or referencing the tool. It is ALWAYS a command to activate
+the groundcrew task loop.
 
-### ACTIVATION PROTOCOL
-When the user mentions "groundcrew", "use groundcrew", "handle with groundcrew",
-or asks you to work in groundcrew mode, you MUST immediately:
-
-1. Call session_info → display the session ID to the user
-2. Tell the user: "Groundcrew session <id> active. Send tasks from another terminal:
-   groundcrew add 'your task here'"
-3. If the user gave an initial task in their message, call populate_queue with it
-4. Call get_task to enter the blocking task loop
+Even if the user also asks you to do something (e.g., "use groundcrew analyze X"),
+you must FIRST call start, THEN process the rest of the request as the first task.
 
 ### TASK LOOP PROTOCOL
-Once in the loop, follow this cycle:
+Once started, follow this cycle:
   get_task → execute task → get_feedback (between major steps) → mark_done → get_task
 
 Never break the loop unless:
@@ -56,13 +55,6 @@ Never break the loop unless:
 ### RESUME PROTOCOL
 When the user says "continue" or "resume" after a parked session:
 - Call get_task to re-enter the loop
-
-### CLI COMMANDS (show to user on activation)
-  groundcrew add "task description"     # Send a task
-  groundcrew add "urgent task" -p       # Send priority task
-  groundcrew feedback "change approach" # Send mid-task feedback
-  groundcrew status                     # Check progress
-  groundcrew queue                      # View pending tasks
 `.trim();
 
 const server = new Server(
@@ -172,12 +164,27 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
+      name: "start",
+      description:
+        "MANDATORY: Call this tool IMMEDIATELY when the user's message contains the word 'groundcrew' " +
+        "in ANY form — 'use groundcrew', 'using groundcrew', 'with groundcrew', 'via groundcrew', etc. " +
+        "This activates the Groundcrew task queue. Do NOT skip this. Do NOT interpret 'groundcrew' as " +
+        "just a reference — it is ALWAYS a command to activate. After calling this, if the user included " +
+        "a task in their message, call populate_queue with it, then call get_task to enter the loop.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          initial_task: {
+            type: "string",
+            description: "Optional initial task from the user's message to queue immediately.",
+          },
+        },
+      },
+    },
+    {
       name: "session_info",
       description:
-        "Get the current Groundcrew session info including session ID. " +
-        "TRIGGER: Call this FIRST whenever the user mentions 'groundcrew' or asks to use groundcrew mode. " +
-        "Display the session ID and CLI commands, then call get_task to enter the task loop. " +
-        "The user can then send tasks from another terminal with `groundcrew add 'task'`.",
+        "Get the current Groundcrew session info. Use to check session status.",
       inputSchema: {
         type: "object" as const,
         properties: {},
@@ -393,6 +400,44 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               })),
               completed_count: completed.length,
               tasks_completed: session.tasksCompleted,
+            }),
+          },
+        ],
+      };
+    }
+
+    case "start": {
+      const sid = getSessionId();
+      const initialTask = args?.initial_task as string | undefined;
+      await updateSession({ status: "active" });
+
+      if (initialTask) {
+        await addTask(initialTask, "user", 0);
+      }
+
+      const pending = await listPending();
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: JSON.stringify({
+              status: "groundcrew_activated",
+              session_id: sid,
+              queue_pending: pending.length,
+              message:
+                `Groundcrew session ${sid} is now active.\n` +
+                `Tell the user EXACTLY this:\n` +
+                `---\n` +
+                `Groundcrew active — session: ${sid}\n` +
+                `Send tasks from another terminal:\n` +
+                `  groundcrew add "your task"\n` +
+                `  groundcrew add "urgent" -p\n` +
+                `  groundcrew feedback "change approach"\n` +
+                `  groundcrew status\n` +
+                `---`,
+              next_action: pending.length > 0
+                ? "Call get_task NOW to start processing the queue."
+                : "Call get_task NOW to wait for tasks from the user's CLI.",
             }),
           },
         ],
