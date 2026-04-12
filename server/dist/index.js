@@ -14290,15 +14290,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
     {
       name: "get_task",
-      description: "Get the next task from the Groundcrew queue. Blocks until a task is available (polls every 1s). PROTOCOL: This is the core of the Groundcrew loop. After you finish executing a task and call mark_done, you MUST call get_task again to continue. Never stop the loop unless get_task returns queue_empty with timeout exhausted, or the user says 'stop'. Between major steps of a task, call get_feedback to check for user corrections.",
+      description: "Get the next task from the Groundcrew queue. Blocks until a task is available (polls every 1s). The timeout is configured server-side (default 90 min) \u2014 do NOT pass timeout_ms. PROTOCOL: This is the core of the Groundcrew loop. After you finish executing a task and call mark_done, you MUST call get_task again to continue. Never stop the loop unless get_task returns session_ended, or the user says 'stop'. Between major steps of a task, call get_feedback to check for user corrections.",
       inputSchema: {
         type: "object",
-        properties: {
-          timeout_ms: {
-            type: "number",
-            description: "How long to wait for a task in milliseconds. Default: 5400000 (90 min). Configurable via GROUNDCREW_SESSION_TIMEOUT env var."
-          }
-        }
+        properties: {}
       }
     },
     {
@@ -14396,8 +14391,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
   switch (name) {
     case "get_task": {
-      const timeout = args?.timeout_ms || SESSION_TIMEOUT;
-      const task = await getNextTask(timeout);
+      const task = await getNextTask(SESSION_TIMEOUT);
       if (task) {
         cacheActiveTask(task);
         await updateSession({ status: "active", currentTask: task.id });
@@ -14428,7 +14422,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             type: "text",
             text: JSON.stringify({
               status: "session_ended",
-              message: "Session timed out after " + Math.round(timeout / 6e4) + " minutes with no tasks. Session ended and cleaned up. Tell the user: 'Groundcrew session ended \u2014 start a new session to continue.'",
+              message: "Session timed out after " + Math.round(SESSION_TIMEOUT / 6e4) + " minutes with no tasks. Session ended and cleaned up. Tell the user: 'Groundcrew session ended \u2014 start a new session to continue.'",
               next_action: "Stop. Session is over."
             })
           }
