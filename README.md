@@ -72,7 +72,7 @@ MCP tool responses are not user prompts. The agent's internal loop (tool calls �
 copilot plugin install jellythomas/groundcrew
 ```
 
-That's it. One command installs everything — MCP server, agent, skill, hooks, and the CLI companion.
+That's it. One command installs the MCP server, hooks, and the CLI companion.
 
 ### Set Up the CLI Companion
 
@@ -298,7 +298,7 @@ groundcrew clear
 
 ## MCP Tools
 
-These tools are registered with Copilot CLI via the MCP server. The agent calls them automatically based on the groundcrew agent instructions.
+These MCP tools are always available when the plugin is installed. The loop protocol is embedded in the tool descriptions and responses — Copilot automatically follows the get_task → execute → mark_done → get_task cycle.
 
 | Tool | Blocking | Description |
 |---|---|---|
@@ -307,7 +307,8 @@ These tools are registered with Copilot CLI via the MCP server. The agent calls 
 | `mark_done` | No | Marks a task as complete with a summary. Increments the session completion counter. |
 | `report_status` | No | Reports progress on the current task. Triggers session health warnings at 90/120 minutes. |
 | `populate_queue` | No | Adds multiple tasks at once. Used by the agent after decomposing a plan into steps. |
-| `list_queue` | No | Returns all pending tasks. Used by the agent to preview upcoming work. |
+| `list_queue` | No | Returns all pending tasks. Used to preview upcoming work. |
+| `session_info` | No | Returns session ID and status. Display to user for session targeting. |
 
 ## Plugin Structure
 
@@ -316,12 +317,7 @@ groundcrew/
 ├── plugin.json              # Copilot CLI plugin manifest
 ├── .mcp.json                # MCP server configuration
 ├── hooks.json               # Session lifecycle hooks
-├── agents/
-│   └── groundcrew.agent.md  # Autonomous loop agent definition
-├── skills/
-│   └── task-loop/
-│       └── SKILL.md         # Task management skill
-├── server/                  # MCP server (TypeScript, bundled)
+├── server/                  # MCP server (loop protocol in tool descriptions)
 │   ├── src/
 │   │   ├── index.ts         # Server entry, tool handlers
 │   │   ├── paths.ts         # Session-scoped file path management
@@ -355,7 +351,7 @@ Groundcrew tracks session duration and warns when quality may degrade:
 - **90 minutes**: Advisory — "Consider creating a checkpoint."
 - **120 minutes**: Warning — "Quality may degrade. Consider a fresh session."
 
-These warnings appear in `report_status` responses. The agent is instructed to surface them to you.
+These warnings appear in `report_status` responses.
 
 ## Files Created
 
@@ -386,7 +382,7 @@ Add `.groundcrew/` to your `.gitignore`.
 ```bash
 # Clone
 git clone https://github.com/jellythomas/groundcrew.git
-cd groundcrew/groundcrew
+cd groundcrew
 
 # Build the MCP server
 cd server && npm install && npm run build && cd ..
