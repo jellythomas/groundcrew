@@ -100,8 +100,9 @@ groundcrew --help
 ### Quick Start
 
 ```bash
-# Start Copilot in groundcrew mode — auto-creates session and enters the task loop
-copilot groundcrew
+# Terminal 1: Start Copilot and activate groundcrew
+copilot
+> "start groundcrew"
 ```
 
 ```bash
