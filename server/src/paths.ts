@@ -1,9 +1,29 @@
 import fs from "fs/promises";
-import { existsSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import path from "path";
 import crypto from "crypto";
+import os from "os";
 
-const GROUNDCREW_DIR = ".groundcrew";
+/**
+ * Resolve the project directory.
+ * The sessionStart hook writes the project CWD to ~/.groundcrew-active-project.
+ * MCP server CWD is the plugin install dir, not the project dir.
+ */
+function resolveProjectDir(): string {
+  const markerFile = path.join(os.homedir(), ".groundcrew-active-project");
+  try {
+    const projectDir = readFileSync(markerFile, "utf-8").trim();
+    if (projectDir && existsSync(projectDir)) {
+      return projectDir;
+    }
+  } catch {
+    // Fall through to CWD
+  }
+  return process.cwd();
+}
+
+const PROJECT_DIR = resolveProjectDir();
+const GROUNDCREW_DIR = path.join(PROJECT_DIR, ".groundcrew");
 const SESSIONS_DIR = path.join(GROUNDCREW_DIR, "sessions");
 const ACTIVE_SESSION_FILE = path.join(GROUNDCREW_DIR, "active-sessions.json");
 
@@ -32,9 +52,8 @@ export async function initSession(): Promise<string> {
   activeSessions[sessionId] = {
     started: new Date().toISOString(),
     pid: process.pid,
-    cwd: process.cwd(),
+    cwd: PROJECT_DIR,
   };
-  await fs.mkdir(GROUNDCREW_DIR, { recursive: true });
   await fs.writeFile(ACTIVE_SESSION_FILE, JSON.stringify(activeSessions, null, 2));
 
   return sessionId;
