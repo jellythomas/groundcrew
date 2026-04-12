@@ -14236,8 +14236,8 @@ async function incrementCompleted() {
   const session = await readSession();
   await updateSession({ tasksCompleted: session.tasksCompleted + 1 });
 }
-async function parkSession() {
-  await updateSession({ status: "parked", currentTask: void 0 });
+async function endSession() {
+  await updateSession({ status: "ended", currentTask: void 0 });
 }
 async function getStatus() {
   const session = await readSession();
@@ -14420,15 +14420,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           ]
         };
       }
-      await parkSession();
+      await endSession();
+      await cleanupSession();
       return {
         content: [
           {
             type: "text",
             text: JSON.stringify({
-              status: "queue_empty",
-              message: "Session timed out after " + Math.round(timeout / 6e4) + " minutes with no tasks. Groundcrew parked. Tell the user: 'Groundcrew parked \u2014 add tasks with `groundcrew add` or `groundcrew chat`, then type `continue` to resume.'",
-              next_action: "Stop and wait. Do NOT call get_task again until the user says 'continue'."
+              status: "session_ended",
+              message: "Session timed out after " + Math.round(timeout / 6e4) + " minutes with no tasks. Session ended and cleaned up. Tell the user: 'Groundcrew session ended \u2014 start a new session to continue.'",
+              next_action: "Stop. Session is over."
             })
           }
         ]
