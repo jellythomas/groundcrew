@@ -66,29 +66,28 @@ MCP tool responses are not user prompts. The agent's internal loop (tool calls â
 - Node.js 22+
 - An active GitHub Copilot subscription
 
-### Install the Plugin
+### Install
 
 ```bash
-# From GitHub
 copilot plugin install jellythomas/groundcrew
-
-# Or from a local path (for development)
-copilot plugin install /path/to/groundcrew
 ```
 
-This registers the MCP server, agent, skill, and hooks with Copilot CLI automatically.
+That's it. One command installs everything â€” MCP server, agent, skill, hooks, and the CLI companion.
 
-### Install the CLI Companion
+### Set Up the CLI Companion
+
+The `groundcrew` CLI is bundled inside the plugin. Add an alias to your shell so you can use it from another terminal:
 
 ```bash
-# From npm
-npm install -g groundcrew-cli
-
-# Or link locally (for development)
-cd groundcrew/cli && npm link
+# Add to your ~/.zshrc or ~/.bashrc
+alias groundcrew='node ~/.copilot/installed-plugins/_direct/jellythomas--groundcrew/cli/dist/index.js'
 ```
 
-This gives you the `groundcrew` command for managing the queue from another terminal.
+Then reload your shell:
+
+```bash
+source ~/.zshrc
+```
 
 ### Verify
 
@@ -349,18 +348,18 @@ git clone https://github.com/jellythomas/groundcrew.git
 cd groundcrew
 
 # Build the MCP server
-cd server && npm install && npm run build
+cd server && npm install && npm run build && cd ..
 
 # Build the CLI
-cd ../cli && npm install && npm run build
+cd cli && npm install && npm run build && cd ..
 
-# Link CLI globally for testing
-npm link
+# Install plugin locally for testing
+copilot plugin install .
 
-# Install plugin locally
-copilot plugin install /path/to/groundcrew
+# Set up CLI alias
+alias groundcrew='node ~/.copilot/installed-plugins/_direct/jellythomas--groundcrew/cli/dist/index.js'
 
-# Test CLI
+# Test
 groundcrew --help
 groundcrew init
 groundcrew add "test task"
