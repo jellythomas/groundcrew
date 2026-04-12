@@ -9,25 +9,22 @@ One prompt. Unlimited tasks. Minimal premium requests.
 ## How It Works
 
 ```
-Terminal 1 (Copilot CLI)              Terminal 2 (You)
+Terminal 1 (Copilot CLI)              Terminal 2 (groundcrew chat)
 ─────────────────────────             ─────────────────────────
-$ copilot                             $ groundcrew add "build auth module"
-                                      $ groundcrew add "write tests"
-> "start groundcrew"                  $ groundcrew add "fix CSS on login"
+$ copilot                             $ groundcrew chat
                                       
-  Agent: reads PRD, makes plan        $ groundcrew status
-  Agent: calls get_task ◄─────────────── queue delivers task 1
-  Agent: builds auth module           $ groundcrew feedback "use bcrypt"
+> "start groundcrew"                  [a1b2c3d4] > build auth module
+                                      ✓ Queued
+  Agent: reads PRD, makes plan        
+  Agent: calls get_task ◄─────────────── queue delivers task
+  Agent: builds auth module           [a1b2c3d4] > /feedback use bcrypt
   Agent: calls get_feedback ◄─────────── feedback delivered mid-task
-  Agent: adjusts, finishes            
-  Agent: calls get_task ◄─────────────── queue delivers task 2
-  Agent: writes tests                 $ groundcrew add --priority "hotfix!"
+  Agent: adjusts, finishes            [a1b2c3d4] > /priority hotfix!
   Agent: calls get_task ◄─────────────── priority task jumps the line
   Agent: fixes hotfix                 
-  ...continues until queue empty...   $ groundcrew history
-  Agent: "Parked. Type continue       
-         to resume."                  $ groundcrew add "build dashboard"
-> "continue" ─────────────────────────── agent wakes, keeps going
+  ...continues until queue empty...   [a1b2c3d4] > /history
+  ...waits up to 90 min for tasks...  [a1b2c3d4] > write tests
+  Agent: "Session ended."             ✓ Queued
 ```
 
 ### The Core Loop
@@ -44,7 +41,7 @@ $ copilot                             $ groundcrew add "build auth module"
                  └───────────┘
 ```
 
-The agent calls `get_task` after each completed task. This MCP tool **blocks** until you add a task to the queue — no LLM calls while waiting, no premium requests burned. When you add a task from another terminal, the file watcher fires, the tool returns, and the agent continues working.
+The agent calls `get_task` after each completed task. This MCP tool **blocks** until you add a task to the queue — no LLM calls while waiting, no premium requests burned. It polls every 1 second for up to 90 minutes (configurable). When you add a task, it's picked up within a second.
 
 ### Premium Request Savings
 
@@ -52,8 +49,8 @@ The agent calls `get_task` after each completed task. This MCP tool **blocks** u
 |---|---|
 | "build auth" → 1 request | "start groundcrew" → 1 request |
 | "continue" → 1 request | `groundcrew add "..."` → 0 requests |
-| "looks good, now tests" → 1 request | `groundcrew feedback "..."` → 0 requests |
-| "what's the status?" → 1 request | `groundcrew status` → 0 requests (local) |
+| "looks good, now tests" → 1 request | `/feedback "..."` → 0 requests |
+| "what's the status?" → 1 request | `/status` → 0 requests (local) |
 | **10 tasks ≈ 20 prompts** | **10 tasks ≈ 1-3 prompts** |
 
 MCP tool responses are not user prompts. The agent's internal loop (tool calls → reasoning → more tool calls) runs without consuming your premium quota.
@@ -106,11 +103,73 @@ copilot
 ```
 
 ```bash
-# From another terminal: manage the queue
+# Terminal 2: Open interactive chat
+groundcrew chat
+```
+
+That's it. Type tasks in the chat, they get queued and processed automatically.
+
+### Interactive Chat Mode (Recommended)
+
+`groundcrew chat` opens an interactive REPL with tab-completion and multiline support:
+
+```
+$ groundcrew chat
+
+Groundcrew chat — a1b2c3d4 (my-project)
+Type tasks to queue. Press Tab to autocomplete commands.
+Use """ to start/end multiline input.
+
+  Commands:
+    /feedback      Send feedback to the agent mid-task
+    /priority      Queue an urgent task (processed first)
+    /switch        Switch to another active session
+    /sessions      List all active sessions
+    /status        Show current session status
+    /history       Show completed tasks
+    /queue         Show pending tasks
+    /clear         Clear pending tasks
+    /quit          Exit chat
+
+[a1b2c3d4] > build the user registration endpoint
+✓ Queued
+
+[a1b2c3d4] > /feedback use bcrypt for password hashing
+✓ Feedback sent
+
+[a1b2c3d4] > /priority fix: API returning 500
+✓ Queued (priority)
+
+[a1b2c3d4] > /status
+Session:
+  ID: a1b2c3d4 | active | 12min | 3 done
+```
+
+**Tab completion:** Type `/` then Tab to see all commands. Type `/f` then Tab to autocomplete to `/feedback`.
+
+**Multiline input:** Use `"""` to start and end a block:
+
+```
+[a1b2c3d4] > """
+[a1b2c3d4] ... analyze this codebase:
+[a1b2c3d4] ... - check for security issues
+[a1b2c3d4] ... - suggest performance improvements
+[a1b2c3d4] ... - identify missing tests
+[a1b2c3d4] ... """
+✓ Queued
+```
+
+### Classic CLI Mode
+
+You can also use individual commands if you prefer:
+
+```bash
 groundcrew add "build the user registration endpoint"
-groundcrew add "add input validation"
-groundcrew add "write integration tests"
+groundcrew add --priority "fix: API returning 500"
+groundcrew feedback "use bcrypt for password hashing"
 groundcrew status
+groundcrew queue
+groundcrew history
 ```
 
 ### Plan-Driven Execution
@@ -132,248 +191,169 @@ Give the agent a large task and it decomposes it into queue items automatically:
 # ...processes all steps autonomously
 ```
 
-### Mid-Task Feedback
-
-The agent periodically checks for feedback between steps. Write feedback from another terminal and the agent incorporates it immediately:
-
-```bash
-groundcrew feedback "use bcrypt instead of argon2 for password hashing"
-groundcrew feedback "skip the email verification for now, we'll add it later"
-```
-
-### Priority Tasks
-
-Inject an urgent task that jumps to the front of the queue:
-
-```bash
-groundcrew add --priority "the migration is broken, fix it before continuing"
-```
-
-The agent picks this up on its next `get_task` call, before any normal-priority tasks.
-
-### Session Lifecycle
-
-```bash
-# Agent works through queue...
-# Queue empties...
-# Agent parks: "All tasks complete. Groundcrew parked."
-
-# Later, add more tasks:
-groundcrew add "build the dashboard"
-groundcrew add "add charts to dashboard"
-
-# Wake the agent with one word:
-> "continue"
-# Agent resumes, processes new tasks
-```
-
 ### Multiple Sessions
 
-Run multiple Copilot CLI instances in the same project — each gets an isolated queue and feedback channel:
+Run multiple Copilot CLI instances in the same project — each gets an isolated queue:
 
 ```bash
 # Terminal 1                           Terminal 2
 $ copilot                              $ copilot
 > "build the backend with groundcrew"  > "build the frontend with groundcrew"
   → session: a1b2c3d4                    → session: e5f6g7h8
-
-# Terminal 3: Manage both
-$ groundcrew sessions
-  * a1b2c3d4  active | backend
-  * e5f6g7h8  active | frontend
-
-$ groundcrew add --session a1b2c3d4 "add rate limiting"
-$ groundcrew add --session e5f6g7h8 "fix the nav bar"
-$ groundcrew feedback --session a1b2c3d4 "use Redis for rate limit store"
 ```
-
-Without `--session`, commands auto-target the most recent active session.
-
-## CLI Reference
-
-### `groundcrew add <task>`
-
-Add a task to the queue. The agent picks it up on its next `get_task` call.
 
 ```bash
-groundcrew add "implement the search feature"
-groundcrew add --priority "fix: API returning 500 on /users"
-groundcrew add -p "urgent: rollback the migration"
-groundcrew add --session a1b2c3d4 "task for a specific session"
+# Terminal 3: Chat with session switching
+$ groundcrew chat
+
+Multiple sessions active:
+  1. a1b2c3d4  my-project  active | 45min | 3 done | 2 queued
+  2. e5f6g7h8  my-project  active | 12min | 0 done | 5 queued
+
+Pick session [1-2]: 1
+
+[a1b2c3d4] > add rate limiting
+✓ Queued
+
+[a1b2c3d4] > /switch 2
+Switched to e5f6g7h8 (my-project)
+
+[e5f6g7h8] > fix the nav bar
+✓ Queued
 ```
 
-| Flag | Description |
-|---|---|
-| `--priority`, `-p` | Mark as urgent (priority 9). Jumps to front of queue. |
-| `--session <id>` | Target a specific session instead of auto-detecting. |
-
-### `groundcrew feedback <message>`
-
-Send feedback to the agent mid-task. The agent checks for feedback between major steps via `get_feedback`.
+### Session Management
 
 ```bash
-groundcrew feedback "use PostgreSQL not SQLite"
-groundcrew feedback "the test is failing because of a missing env var, check .env.example"
-groundcrew feedback --session a1b2c3d4 "feedback for a specific session"
+# Stop a specific session
+groundcrew stop --session a1b2c3d4
+
+# Stop all active sessions
+groundcrew stop
+
+# Delete a specific session and its data
+groundcrew destroy --session a1b2c3d4
+
+# Delete all sessions, history, and data
+groundcrew destroy
 ```
 
-### `groundcrew queue`
+### Session Timeout
 
-List all pending tasks in the queue, ordered by priority.
+Sessions stay alive for **90 minutes** by default, polling every 1 second for new tasks. When the timeout expires, the session automatically ends and cleans up. Configure via environment variable:
 
-```bash
-groundcrew queue
+```json
+// .mcp.json
+{
+  "env": {
+    "GROUNDCREW_SESSION_TIMEOUT": "5400000"  // 90 min (default)
+  }
+}
 ```
 
-```
-Pending tasks (3):
+Set to `"900000"` for 15 min, `"3600000"` for 1 hour, `"7200000"` for 2 hours.
 
-  1. [P9] fix: API returning 500 on /users
-     user | task-1234567890-abc123
-  2. implement the search feature
-     user | task-1234567891-def456
-  3. add pagination to results
-     plan | task-1234567892-ghi789
+### Persistent History
 
-  2 task(s) completed this session.
-```
-
-### `groundcrew status`
-
-Show current session status, active task, and the last progress update from the agent.
-
-```bash
-groundcrew status
-groundcrew status --session a1b2c3d4
-```
-
-```
-Session:
-  ID:        a1b2c3d4
-  Status:    active
-  Duration:  45min
-  Completed: 3 tasks
-  Current:   task-1234567892-ghi789
-
-Queue: 2 pending
-
-Last update: Added pagination component with next/prev buttons
-  Progress: 2/3 steps
-  2025-04-12T10:30:00Z
-```
-
-### `groundcrew sessions`
-
-List all active and recent sessions. Each Copilot CLI instance gets its own isolated session.
-
-```bash
-groundcrew sessions
-```
-
-```
-Sessions:
-
-  * a1b2c3d4  active | 45min | 3 tasks done | 2 queued
-  * e5f6g7h8  active | 12min | 0 tasks done | 5 queued
-    f9a0b1c2  parked | 120min | 8 tasks done | 0 queued
-
-  * = active (MCP server running)
-```
-
-### `groundcrew history`
-
-Show all tasks completed in the current session.
+Task history persists across sessions in `.groundcrew/history.json`. View completed tasks with full AI output even after sessions end:
 
 ```bash
 groundcrew history
 ```
 
-### `groundcrew clear`
-
-Remove all pending tasks from the queue. Does not affect completed tasks.
-
-```bash
-groundcrew clear
 ```
+Completed tasks (3):
+
+  task  build the user registration endpoint
+  done  Created /api/users endpoint with validation, bcrypt hashing, JWT tokens
+  ───────────────────────────────────────
+  │ Full AI response with code changes,
+  │ analysis, and detailed output...
+  ───────────────────────────────────────
+        2026-04-12T10:30:00Z | user | task-1234567890-abc123
+```
+
+## CLI Reference
+
+| Command | Description |
+|---|---|
+| `groundcrew chat` | Interactive chat mode with tab-completion (recommended) |
+| `groundcrew chat --session <id>` | Chat with a specific session |
+| `groundcrew add <task>` | Add a task to the queue |
+| `groundcrew add --priority <task>` | Add an urgent task (processed first) |
+| `groundcrew add --session <id> <task>` | Add to a specific session |
+| `groundcrew feedback <message>` | Send feedback to the agent mid-task |
+| `groundcrew feedback --session <id> <msg>` | Send feedback to a specific session |
+| `groundcrew queue` | List pending tasks |
+| `groundcrew status` | Show session status and last update |
+| `groundcrew sessions` | List all sessions |
+| `groundcrew history` | Show completed tasks (persists across sessions) |
+| `groundcrew clear` | Clear all pending tasks |
+| `groundcrew stop` | Stop all active sessions |
+| `groundcrew stop --session <id>` | Stop a specific session |
+| `groundcrew destroy` | Delete all sessions, history, and data |
+| `groundcrew destroy --session <id>` | Delete a specific session |
+| `groundcrew init` | Initialize .groundcrew/ in current dir |
+
+### Chat Commands
+
+Inside `groundcrew chat`, these commands are available (with Tab completion):
+
+| Command | Description |
+|---|---|
+| `/feedback <msg>` | Send feedback to the agent mid-task |
+| `/priority <task>` | Queue an urgent task (processed first) |
+| `/switch [N]` | Switch to another active session |
+| `/sessions` | List all active sessions |
+| `/status` | Show current session status |
+| `/history` | Show completed tasks |
+| `/queue` | Show pending tasks |
+| `/clear` | Clear pending tasks |
+| `/quit` | Exit chat |
+| `"""` | Start/end multiline input |
 
 ## MCP Tools
 
-These MCP tools are always available when the plugin is installed. The loop protocol is embedded in the tool descriptions and responses — Copilot automatically follows the get_task → execute → mark_done → get_task cycle.
+These MCP tools are available when the plugin is installed. The agent automatically follows the get_task → execute → mark_done → get_task cycle via server instructions.
 
 | Tool | Blocking | Description |
 |---|---|---|
-| `get_task` | Yes | Returns the next task from the queue. Blocks until a task is available or timeout. Retries with backoff, then parks the session. |
-| `get_feedback` | Yes (short) | Checks for user feedback in `.groundcrew/feedback.md`. Blocks briefly (default 30s), returns null if no feedback. |
-| `mark_done` | No | Marks a task as complete with a summary. Increments the session completion counter. |
-| `report_status` | No | Reports progress on the current task. Triggers session health warnings at 90/120 minutes. |
-| `populate_queue` | No | Adds multiple tasks at once. Used by the agent after decomposing a plan into steps. |
-| `list_queue` | No | Returns all pending tasks. Used to preview upcoming work. |
-| `session_info` | No | Returns session ID and status. Display to user for session targeting. |
-
-## Plugin Structure
-
-```
-groundcrew/
-├── plugin.json              # Copilot CLI plugin manifest
-├── .mcp.json                # MCP server configuration
-├── hooks.json               # Session lifecycle hooks
-├── server/                  # MCP server (loop protocol in tool descriptions)
-│   ├── src/
-│   │   ├── index.ts         # Server entry, tool handlers
-│   │   ├── paths.ts         # Session-scoped file path management
-│   │   ├── queue.ts         # Queue read/write/watch
-│   │   ├── feedback.ts      # Feedback file watcher
-│   │   └── session.ts       # Session health tracking
-│   └── dist/
-│       └── index.js         # Bundled output (~500KB, zero runtime deps)
-└── cli/                     # CLI companion (TypeScript, bundled)
-    ├── src/
-    │   └── index.ts         # CLI entry, all commands
-    └── dist/
-        └── index.js         # Bundled output (~7KB, zero runtime deps)
-```
+| `start` | No | Activates groundcrew mode. Called automatically when user mentions "groundcrew". Shows session ID and CLI commands. |
+| `get_task` | Yes (up to 90 min) | Returns the next task. Blocks with 1s polling until a task is available or session timeout. |
+| `get_feedback` | Yes (30s) | Checks for user feedback. Blocks briefly, returns null if no feedback. |
+| `mark_done` | No | Marks task complete with summary and full output. Saves to session and project-level history. |
+| `report_status` | No | Reports progress. Triggers health warnings at 90/120 minutes. |
+| `populate_queue` | No | Adds multiple tasks at once. Used after decomposing a plan into steps. |
+| `list_queue` | No | Returns all pending tasks. |
+| `session_info` | No | Returns session ID and status. |
 
 ## Configuration
 
-Environment variables for the MCP server (set in `.mcp.json` or system env):
+Environment variables for the MCP server (set in `.mcp.json`):
 
 | Variable | Default | Description |
 |---|---|---|
-| `GROUNDCREW_TASK_TIMEOUT` | `300000` | How long `get_task` blocks per attempt (ms) |
-| `GROUNDCREW_MAX_IDLE_RETRIES` | `3` | Retry attempts before parking |
-| `GROUNDCREW_HUMAN_DELAY_MIN` | `2000` | Minimum delay on auto-responses (ms) |
-| `GROUNDCREW_HUMAN_DELAY_MAX` | `6000` | Maximum delay on auto-responses (ms) |
-
-## Session Health
-
-Groundcrew tracks session duration and warns when quality may degrade:
-
-- **90 minutes**: Advisory — "Consider creating a checkpoint."
-- **120 minutes**: Warning — "Quality may degrade. Consider a fresh session."
-
-These warnings appear in `report_status` responses.
+| `GROUNDCREW_SESSION_TIMEOUT` | `5400000` | How long `get_task` blocks waiting for tasks (ms). Default 90 min. |
 
 ## Files Created
 
-Groundcrew creates a `.groundcrew/` directory in your project root with session-scoped isolation:
+Groundcrew creates a `.groundcrew/` directory in your project root:
 
 ```
 .groundcrew/
 ├── active-sessions.json              # Tracks running MCP server instances
+├── history.json                      # Completed tasks across all sessions (persistent)
+├── session.json                      # Hook-managed session metadata
+├── tool-history.csv                  # Audit log of all tool calls
 └── sessions/
     ├── a1b2c3d4/                     # Session 1 (isolated)
     │   ├── queue.json                # Task queue (pending + completed)
-    │   ├── feedback.md               # Feedback file (write here, agent reads)
-    │   ├── session.json              # Session metadata (start time, status, task count)
-    │   └── status.json               # Status reports log from the agent
+    │   ├── feedback.md               # Feedback channel (user writes, agent reads)
+    │   ├── session.json              # Session metadata
+    │   └── status.json               # Status reports from the agent
     └── e5f6g7h8/                     # Session 2 (isolated)
-        ├── queue.json
-        ├── feedback.md
-        ├── session.json
-        └── status.json
+        └── ...
 ```
-
-Each Copilot CLI instance generates a unique session ID on startup. All data is scoped to that session — no cross-talk between concurrent sessions.
 
 Add `.groundcrew/` to your `.gitignore`.
 
