@@ -4,6 +4,7 @@ import{createRequire}from'module';const require=createRequire(import.meta.url);
 import fs from "fs/promises";
 import { existsSync } from "fs";
 import path from "path";
+import readline from "readline";
 var GROUNDCREW_DIR = ".groundcrew";
 var SESSIONS_DIR = path.join(GROUNDCREW_DIR, "sessions");
 var ACTIVE_SESSIONS_FILE = path.join(GROUNDCREW_DIR, "active-sessions.json");
@@ -236,11 +237,184 @@ async function sessions() {
   ${green("*")} = active (MCP server running)`));
   }
 }
+async function listSessionChoices() {
+  const active = await readActiveSessions();
+  const choices = [];
+  for (const [id, entry] of Object.entries(active)) {
+    const dir = path.join(SESSIONS_DIR, id);
+    let status2 = "active";
+    let minutes = 0;
+    let tasks = 0;
+    let queued = 0;
+    try {
+      const session = JSON.parse(await fs.readFile(path.join(dir, "session.json"), "utf-8"));
+      status2 = session.status || "active";
+      minutes = Math.round((Date.now() - new Date(session.started).getTime()) / 6e4);
+      tasks = session.tasksCompleted || 0;
+    } catch {
+    }
+    try {
+      const queue = await readQueue(dir);
+      queued = queue.tasks.length;
+    } catch {
+    }
+    choices.push({ id, dir, cwd: entry.cwd || "unknown", status: status2, minutes, tasks, queued });
+  }
+  return choices;
+}
+async function pickSession(rl) {
+  const choices = await listSessionChoices();
+  if (choices.length === 0) {
+    console.log(red("No active sessions. Start Copilot with groundcrew first."));
+    return null;
+  }
+  if (choices.length === 1) {
+    return choices[0];
+  }
+  console.log(bold("\nMultiple sessions active:\n"));
+  choices.forEach((s, i) => {
+    const projectName = path.basename(s.cwd);
+    const statusColor = s.status === "active" ? green : s.status === "parked" ? yellow : dim;
+    console.log(`  ${bold(String(i + 1))}. ${cyan(s.id)}  ${dim(projectName)}  ${statusColor(s.status)} | ${s.minutes}min | ${s.tasks} done | ${s.queued} queued`);
+  });
+  console.log();
+  return new Promise((resolve) => {
+    rl.question(`Pick session [1-${choices.length}]: `, (answer) => {
+      const idx = parseInt(answer) - 1;
+      if (idx >= 0 && idx < choices.length) {
+        resolve(choices[idx]);
+      } else {
+        console.log(red("Invalid choice."));
+        resolve(null);
+      }
+    });
+  });
+}
+async function chat(explicitSession) {
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout
+  });
+  let current = null;
+  if (explicitSession) {
+    const dir = path.join(SESSIONS_DIR, explicitSession);
+    if (!existsSync(dir)) {
+      console.log(red(`Session "${explicitSession}" not found.`));
+      rl.close();
+      return;
+    }
+    current = { id: explicitSession, dir, cwd: ".", status: "active", minutes: 0, tasks: 0, queued: 0 };
+  } else {
+    current = await pickSession(rl);
+    if (!current) {
+      rl.close();
+      return;
+    }
+  }
+  const projectName = path.basename(current.cwd);
+  console.log(`
+${bold("Groundcrew chat")} \u2014 ${cyan(current.id)} ${dim(`(${projectName})`)}`);
+  console.log(dim("Type tasks to queue. Commands: /feedback, /priority, /switch, /sessions, /status, /history, /quit\n"));
+  const prompt = () => {
+    rl.question(`${dim(`[${current.id}]`)} ${bold(">")} `, async (line) => {
+      const trimmed = line.trim();
+      if (!trimmed) {
+        prompt();
+        return;
+      }
+      try {
+        if (trimmed === "/quit" || trimmed === "/exit") {
+          console.log(dim("Bye."));
+          rl.close();
+          return;
+        }
+        if (trimmed === "/sessions") {
+          const choices = await listSessionChoices();
+          if (choices.length === 0) {
+            console.log(dim("No active sessions."));
+          } else {
+            choices.forEach((s, i) => {
+              const marker = s.id === current.id ? green("*") : " ";
+              const pName = path.basename(s.cwd);
+              console.log(`  ${marker} ${bold(String(i + 1))}. ${cyan(s.id)}  ${dim(pName)} | ${s.status} | ${s.minutes}min | ${s.tasks} done`);
+            });
+          }
+          prompt();
+          return;
+        }
+        if (trimmed.startsWith("/switch")) {
+          const arg = trimmed.slice(7).trim();
+          const choices = await listSessionChoices();
+          if (choices.length === 0) {
+            console.log(red("No active sessions."));
+            prompt();
+            return;
+          }
+          const idx = parseInt(arg) - 1;
+          if (idx >= 0 && idx < choices.length) {
+            current = choices[idx];
+            console.log(green(`Switched to ${current.id} (${path.basename(current.cwd)})`));
+          } else {
+            choices.forEach((s, i) => {
+              const marker = s.id === current.id ? green("*") : " ";
+              console.log(`  ${marker} ${bold(String(i + 1))}. ${cyan(s.id)}  ${dim(path.basename(s.cwd))}`);
+            });
+          }
+          prompt();
+          return;
+        }
+        if (trimmed === "/status") {
+          await status(current.dir);
+          prompt();
+          return;
+        }
+        if (trimmed === "/history") {
+          await history();
+          prompt();
+          return;
+        }
+        if (trimmed.startsWith("/feedback ")) {
+          const msg = trimmed.slice(10).trim();
+          if (msg) {
+            await feedback(msg, current.dir);
+          } else {
+            console.log(red("Usage: /feedback <message>"));
+          }
+          prompt();
+          return;
+        }
+        if (trimmed.startsWith("/priority ")) {
+          const task = trimmed.slice(10).trim();
+          if (task) {
+            await add(task, 9, current.dir);
+          } else {
+            console.log(red("Usage: /priority <task>"));
+          }
+          prompt();
+          return;
+        }
+        if (trimmed.startsWith("/")) {
+          console.log(red(`Unknown command: ${trimmed.split(" ")[0]}`));
+          console.log(dim("Commands: /feedback, /priority, /switch, /sessions, /status, /history, /quit"));
+          prompt();
+          return;
+        }
+        await add(trimmed, 0, current.dir);
+      } catch (err) {
+        console.error(red(err.message));
+      }
+      prompt();
+    });
+  };
+  prompt();
+}
 function usage() {
   console.log(`
 ${bold("groundcrew")} \u2014 CLI companion for the Groundcrew Copilot plugin
 
 ${bold("Usage:")}
+  groundcrew chat                              Interactive chat mode (recommended)
+  groundcrew chat --session <id>               Chat with a specific session
   groundcrew init                              Initialize .groundcrew/ in current dir
   groundcrew add <task>                        Add a task to the queue
   groundcrew add --priority <task>             Add an urgent task (processed first)
@@ -283,6 +457,9 @@ async function main() {
   switch (command) {
     case "init":
       await init();
+      return;
+    case "chat":
+      await chat(explicitSession);
       return;
     case "sessions":
       await sessions();
