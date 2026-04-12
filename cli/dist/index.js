@@ -479,15 +479,16 @@ async function chat(explicitSession) {
     }
   }
   const projectName = path.basename(current.cwd);
-  console.log(`
-${bold("Groundcrew chat")} \u2014 ${cyan(current.id)} ${dim(`(${projectName})`)}`);
-  console.log(dim("Type tasks to queue. Press Tab for command suggestions."));
-  console.log(dim(`End a line with ${cyan("\\")} to continue on next line.
-`));
-  console.log(dim("  Commands (Tab to autocomplete):"));
-  for (const c of CHAT_COMMANDS) {
-    console.log(dim(`    ${cyan(c.cmd.padEnd(14))} ${c.desc}`));
-  }
+  const W = 47;
+  const title = `  groundcrew  ${current.id}  ${projectName}  `;
+  const pad1 = Math.max(0, W - title.length);
+  console.log();
+  console.log(dim("  \u256D" + "\u2500".repeat(W) + "\u256E"));
+  console.log(dim("  \u2502") + "  " + bold("groundcrew") + "  " + cyan(current.id) + "  " + dim(projectName) + " ".repeat(pad1) + dim("  \u2502"));
+  console.log(dim("  \u251C" + "\u2500".repeat(W) + "\u2524"));
+  console.log(dim("  \u2502  Type tasks to queue. / for commands.       \u2502"));
+  console.log(dim("  \u2502  End line with \\ for multiline.             \u2502"));
+  console.log(dim("  \u2570" + "\u2500".repeat(W) + "\u256F"));
   console.log();
   let continuationBuffer = [];
   rl.on("close", () => {
