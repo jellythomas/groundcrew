@@ -76,17 +76,13 @@ That's it. One command installs everything — MCP server, agent, skill, hooks, 
 
 ### Set Up the CLI Companion
 
-The `groundcrew` CLI is bundled inside the plugin. Add an alias to your shell so you can use it from another terminal:
-
 ```bash
-# Add to your ~/.zshrc or ~/.bashrc
-alias groundcrew='node ~/.copilot/installed-plugins/_direct/jellythomas--groundcrew/cli/dist/index.js'
-```
+# Install the CLI globally
+npm install -g groundcrew-cli
 
-Then reload your shell:
-
-```bash
-source ~/.zshrc
+# Initialize groundcrew in your project (one-time setup)
+cd your-project
+groundcrew init
 ```
 
 ### Verify
@@ -104,16 +100,12 @@ groundcrew --help
 ### Quick Start
 
 ```bash
-# Terminal 1: Start Copilot
-copilot
-
-# Tell it to use groundcrew
-> "Read the PRD at docs/feature.md, create a plan, and execute it with groundcrew"
+# Start Copilot in groundcrew mode — auto-creates session and enters the task loop
+copilot groundcrew
 ```
 
 ```bash
-# Terminal 2: Manage the queue
-groundcrew init
+# From another terminal: manage the queue
 groundcrew add "build the user registration endpoint"
 groundcrew add "add input validation"
 groundcrew add "write integration tests"
@@ -197,14 +189,6 @@ $ groundcrew feedback --session a1b2c3d4 "use Redis for rate limit store"
 Without `--session`, commands auto-target the most recent active session.
 
 ## CLI Reference
-
-### `groundcrew init`
-
-Initialize a `.groundcrew/` directory in the current project. Creates the queue file and feedback file.
-
-```bash
-groundcrew init
-```
 
 ### `groundcrew add <task>`
 
@@ -401,7 +385,7 @@ Add `.groundcrew/` to your `.gitignore`.
 ```bash
 # Clone
 git clone https://github.com/jellythomas/groundcrew.git
-cd groundcrew
+cd groundcrew/groundcrew
 
 # Build the MCP server
 cd server && npm install && npm run build && cd ..
@@ -412,8 +396,8 @@ cd cli && npm install && npm run build && cd ..
 # Install plugin locally for testing
 copilot plugin install .
 
-# Set up CLI alias
-alias groundcrew='node ~/.copilot/installed-plugins/_direct/jellythomas--groundcrew/cli/dist/index.js'
+# Install CLI globally for testing
+cd cli && npm install -g . && cd ..
 
 # Test
 groundcrew --help
