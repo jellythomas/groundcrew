@@ -74,18 +74,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       name: "get_task",
       description:
         "Get the next task from the Groundcrew queue. Blocks until a task is available (polls every 1s). " +
+        "The timeout is configured server-side (default 90 min) — do NOT pass timeout_ms. " +
         "PROTOCOL: This is the core of the Groundcrew loop. After you finish executing a task " +
         "and call mark_done, you MUST call get_task again to continue. Never stop the loop " +
-        "unless get_task returns queue_empty with timeout exhausted, or the user says 'stop'. " +
+        "unless get_task returns session_ended, or the user says 'stop'. " +
         "Between major steps of a task, call get_feedback to check for user corrections.",
       inputSchema: {
         type: "object" as const,
-        properties: {
-          timeout_ms: {
-            type: "number",
-            description: "How long to wait for a task in milliseconds. Default: 5400000 (90 min). Configurable via GROUNDCREW_SESSION_TIMEOUT env var.",
-          },
-        },
+        properties: {},
       },
     },
     {
@@ -208,8 +204,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
   switch (name) {
     case "get_task": {
-      const timeout = (args?.timeout_ms as number) || SESSION_TIMEOUT;
-      const task = await getNextTask(timeout);
+      // Always use server-configured timeout — never trust LLM-provided values
+      const task = await getNextTask(SESSION_TIMEOUT);
 
       if (task) {
         cacheActiveTask(task);
@@ -244,7 +240,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             text: JSON.stringify({
               status: "session_ended",
               message:
-                "Session timed out after " + Math.round(timeout / 60000) + " minutes with no tasks. " +
+                "Session timed out after " + Math.round(SESSION_TIMEOUT / 60000) + " minutes with no tasks. " +
                 "Session ended and cleaned up. Tell the user: 'Groundcrew session ended — start a new session to continue.'",
               next_action: "Stop. Session is over.",
             }),

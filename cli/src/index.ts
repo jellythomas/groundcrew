@@ -557,15 +557,46 @@ async function chat(explicitSession?: string): Promise<void> {
 
   const projectName = path.basename(current.cwd);
   console.log(`\n${bold("Groundcrew chat")} — ${cyan(current.id)} ${dim(`(${projectName})`)}`);
-  console.log(dim("Type tasks to queue. Press Tab to autocomplete commands.\n"));
+  console.log(dim("Type tasks to queue. Press Tab to autocomplete commands."));
+  console.log(dim(`Use ${cyan('"""')} to start/end multiline input.\n`));
   console.log(dim("  Commands:"));
   for (const c of CHAT_COMMANDS) {
     console.log(dim(`    ${cyan(c.cmd.padEnd(14))} ${c.desc}`));
   }
   console.log();
 
+  let multilineBuffer: string[] | null = null;
+
   const prompt = () => {
-    rl.question(`${dim(`[${current!.id}]`)} ${bold(">")} `, async (line) => {
+    const prefix = multilineBuffer
+      ? `${dim(`[${current!.id}]`)} ${dim("...")} `
+      : `${dim(`[${current!.id}]`)} ${bold(">")} `;
+
+    rl.question(prefix, async (line) => {
+      // Multiline mode
+      if (multilineBuffer !== null) {
+        if (line.trim() === '"""') {
+          // End multiline — join and process
+          const fullText = multilineBuffer.join("\n").trim();
+          multilineBuffer = null;
+          if (fullText) {
+            try {
+              await add(fullText, 0, current!.dir);
+            } catch (err: any) {
+              console.error(red(err.message));
+            }
+          }
+          prompt(); return;
+        }
+        multilineBuffer.push(line);
+        prompt(); return;
+      }
+
+      if (line.trim() === '"""') {
+        multilineBuffer = [];
+        prompt(); return;
+      }
+
       const trimmed = line.trim();
       if (!trimmed) { prompt(); return; }
 
