@@ -13897,27 +13897,34 @@ import { existsSync, readFileSync } from "fs";
 import path from "path";
 import crypto from "crypto";
 import os from "os";
-function resolveProjectDir() {
-  const markerFile = path.join(os.homedir(), ".groundcrew-active-project");
-  try {
-    const projectDir = readFileSync(markerFile, "utf-8").trim();
-    if (projectDir && existsSync(projectDir)) {
-      return projectDir;
+var MARKER_FILE = path.join(os.homedir(), ".groundcrew-active-project");
+async function resolveProjectDir() {
+  for (let i = 0; i < 6; i++) {
+    try {
+      const projectDir = readFileSync(MARKER_FILE, "utf-8").trim();
+      if (projectDir && existsSync(projectDir)) {
+        return projectDir;
+      }
+    } catch {
     }
-  } catch {
+    if (i < 5) await new Promise((r) => setTimeout(r, 500));
   }
   return process.cwd();
 }
-var PROJECT_DIR = resolveProjectDir();
-var GROUNDCREW_DIR = path.join(PROJECT_DIR, ".groundcrew");
-var SESSIONS_DIR = path.join(GROUNDCREW_DIR, "sessions");
-var ACTIVE_SESSION_FILE = path.join(GROUNDCREW_DIR, "active-sessions.json");
+var PROJECT_DIR = "";
+var GROUNDCREW_DIR = "";
+var SESSIONS_DIR = "";
+var ACTIVE_SESSION_FILE = "";
 var sessionId = null;
 var sessionDir = null;
 function generateSessionId() {
   return crypto.randomBytes(4).toString("hex");
 }
 async function initSession() {
+  PROJECT_DIR = await resolveProjectDir();
+  GROUNDCREW_DIR = path.join(PROJECT_DIR, ".groundcrew");
+  SESSIONS_DIR = path.join(GROUNDCREW_DIR, "sessions");
+  ACTIVE_SESSION_FILE = path.join(GROUNDCREW_DIR, "active-sessions.json");
   sessionId = generateSessionId();
   sessionDir = path.join(SESSIONS_DIR, sessionId);
   await fs.mkdir(sessionDir, { recursive: true });
