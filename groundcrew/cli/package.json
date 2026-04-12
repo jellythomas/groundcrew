@@ -10,12 +10,18 @@
     "build": "esbuild src/index.ts --bundle --platform=node --target=node22 --format=esm --outfile=dist/index.js && echo '#!/usr/bin/env node' > dist/_tmp.js && echo \"import{createRequire}from'module';const require=createRequire(import.meta.url);\" >> dist/_tmp.js && cat dist/index.js >> dist/_tmp.js && mv dist/_tmp.js dist/index.js && chmod +x dist/index.js",
     "dev": "tsx src/index.ts"
   },
-  "keywords": ["copilot", "cli", "task-queue", "groundcrew", "autonomous"],
+  "keywords": [
+    "copilot",
+    "cli",
+    "task-queue",
+    "groundcrew",
+    "autonomous"
+  ],
   "author": "jellythomas",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/jellythomas/groundcrew",
+    "url": "git+https://github.com/jellythomas/groundcrew.git",
     "directory": "cli"
   },
   "devDependencies": {
