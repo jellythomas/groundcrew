@@ -14200,9 +14200,46 @@ async function getStatus() {
 var TASK_TIMEOUT = parseInt(process.env.GROUNDCREW_TASK_TIMEOUT || "300000");
 var MAX_IDLE_RETRIES = parseInt(process.env.GROUNDCREW_MAX_IDLE_RETRIES || "3");
 var FEEDBACK_TIMEOUT = 3e4;
+var GROUNDCREW_INSTRUCTIONS = `
+## Groundcrew \u2014 Autonomous Task Queue for Claude Code
+
+Groundcrew lets users send tasks to this session from another terminal while you work.
+
+### ACTIVATION PROTOCOL
+When the user mentions "groundcrew", "use groundcrew", "handle with groundcrew",
+or asks you to work in groundcrew mode, you MUST immediately:
+
+1. Call session_info \u2192 display the session ID to the user
+2. Tell the user: "Groundcrew session <id> active. Send tasks from another terminal:
+   groundcrew add 'your task here'"
+3. If the user gave an initial task in their message, call populate_queue with it
+4. Call get_task to enter the blocking task loop
+
+### TASK LOOP PROTOCOL
+Once in the loop, follow this cycle:
+  get_task \u2192 execute task \u2192 get_feedback (between major steps) \u2192 mark_done \u2192 get_task
+
+Never break the loop unless:
+- get_task returns queue_empty with retries exhausted (session parks automatically)
+- The user explicitly says "stop" or "exit groundcrew"
+
+### RESUME PROTOCOL
+When the user says "continue" or "resume" after a parked session:
+- Call get_task to re-enter the loop
+
+### CLI COMMANDS (show to user on activation)
+  groundcrew add "task description"     # Send a task
+  groundcrew add "urgent task" -p       # Send priority task
+  groundcrew feedback "change approach" # Send mid-task feedback
+  groundcrew status                     # Check progress
+  groundcrew queue                      # View pending tasks
+`.trim();
 var server = new Server(
   { name: "groundcrew", version: "0.1.0" },
-  { capabilities: { tools: {} } }
+  {
+    capabilities: { tools: {} },
+    instructions: GROUNDCREW_INSTRUCTIONS
+  }
 );
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
@@ -14285,7 +14322,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "session_info",
-      description: "Get the current Groundcrew session info including session ID. Display the session ID to the user so they can target this session from another terminal with `groundcrew add --session <id>`.",
+      description: "Get the current Groundcrew session info including session ID. TRIGGER: Call this FIRST whenever the user mentions 'groundcrew' or asks to use groundcrew mode. Display the session ID and CLI commands, then call get_task to enter the task loop. The user can then send tasks from another terminal with `groundcrew add 'task'`.",
       inputSchema: {
         type: "object",
         properties: {}
