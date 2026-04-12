@@ -13966,6 +13966,9 @@ function getSessionFile() {
 function getStatusFile() {
   return path.join(getSessionDir(), "status.json");
 }
+function getHistoryFile() {
+  return path.join(GROUNDCREW_DIR, "history.json");
+}
 async function readActiveSessions() {
   try {
     const raw = await fs.readFile(ACTIVE_SESSION_FILE, "utf-8");
@@ -14062,17 +14065,34 @@ async function getNextTask(timeoutMs) {
     }, timeoutMs);
   });
 }
-async function markTaskDone(taskId, summary) {
+async function markTaskDone(taskId, summary, output) {
   const queue = await readQueue();
   const completed = {
     id: taskId,
-    task: "",
-    source: "",
+    task: activeTaskCache.get(taskId)?.task || "",
+    source: activeTaskCache.get(taskId)?.source || "user",
     completedAt: (/* @__PURE__ */ new Date()).toISOString(),
-    summary
+    summary,
+    ...output ? { output } : {}
   };
+  activeTaskCache.delete(taskId);
   queue.completed.push(completed);
   await writeQueue(queue);
+  await appendHistory(completed);
+}
+async function appendHistory(entry) {
+  const histFile = getHistoryFile();
+  let history = [];
+  try {
+    history = JSON.parse(await fs2.readFile(histFile, "utf-8"));
+  } catch {
+  }
+  history.push(entry);
+  await fs2.writeFile(histFile, JSON.stringify(history, null, 2));
+}
+var activeTaskCache = /* @__PURE__ */ new Map();
+function cacheActiveTask(task) {
+  activeTaskCache.set(task.id, { task: task.task, source: task.source });
 }
 async function listPending() {
   const queue = await readQueue();
@@ -14302,9 +14322,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         type: "object",
         properties: {
           task_id: { type: "string", description: "ID of the completed task." },
-          summary: { type: "string", description: "Brief summary of what was accomplished." }
+          summary: { type: "string", description: "Brief 1-2 sentence summary of what was accomplished." },
+          output: {
+            type: "string",
+            description: "Full detailed output of the task \u2014 include your complete response, findings, code changes, analysis results, or any other deliverable. This is what the user will read when they run 'groundcrew history'. Be thorough."
+          }
         },
-        required: ["task_id", "summary"]
+        required: ["task_id", "summary", "output"]
       }
     },
     {
@@ -14378,6 +14402,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       while (retries < MAX_IDLE_RETRIES) {
         const task = await getNextTask(timeout);
         if (task) {
+          cacheActiveTask(task);
           await updateSession({ status: "active", currentTask: task.id });
           const remaining = (await listPending()).length;
           return {
@@ -14450,6 +14475,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     case "mark_done": {
       const taskId = args?.task_id;
       const summary = args?.summary;
+      const output = args?.output;
       if (!taskId || !summary) {
         return {
           content: [
@@ -14458,7 +14484,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           isError: true
         };
       }
-      await markTaskDone(taskId, summary);
+      await markTaskDone(taskId, summary, output);
       await incrementCompleted();
       const pending = await listPending();
       return {

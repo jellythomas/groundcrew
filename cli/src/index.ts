@@ -5,6 +5,7 @@ import path from "path";
 const GROUNDCREW_DIR = ".groundcrew";
 const SESSIONS_DIR = path.join(GROUNDCREW_DIR, "sessions");
 const ACTIVE_SESSIONS_FILE = path.join(GROUNDCREW_DIR, "active-sessions.json");
+const HISTORY_FILE = path.join(GROUNDCREW_DIR, "history.json");
 
 interface Task {
   id: string;
@@ -234,18 +235,44 @@ async function clear(sessionDir: string): Promise<void> {
   console.log(green("Queue cleared."));
 }
 
-async function history(sessionDir: string): Promise<void> {
-  const queue = await readQueue(sessionDir);
+async function history(_sessionDir?: string): Promise<void> {
+  // Read from project-level history (persists across sessions)
+  let completed: Array<{
+    id: string;
+    task: string;
+    source: string;
+    completedAt: string;
+    summary: string;
+    output?: string;
+  }> = [];
 
-  if (queue.completed.length === 0) {
+  try {
+    completed = JSON.parse(await fs.readFile(HISTORY_FILE, "utf-8"));
+  } catch { /* no history yet */ }
+
+  if (completed.length === 0) {
     console.log(dim("No completed tasks yet."));
     return;
   }
 
-  console.log(bold(`Completed tasks (${queue.completed.length}):\n`));
-  for (const task of queue.completed) {
-    console.log(`  ${green("done")} ${task.summary || task.task}`);
-    console.log(dim(`       ${task.completedAt} | ${task.id}`));
+  console.log(bold(`Completed tasks (${completed.length}):\n`));
+  for (const task of completed) {
+    // Task prompt
+    if (task.task) {
+      console.log(`  ${cyan("task")}  ${task.task}`);
+    }
+    // Summary
+    console.log(`  ${green("done")}  ${task.summary}`);
+    // Full output
+    if (task.output) {
+      console.log(`  ${dim("───────────────────────────────────────")}`);
+      for (const line of task.output.split("\n")) {
+        console.log(`  ${dim("│")} ${line}`);
+      }
+      console.log(`  ${dim("───────────────────────────────────────")}`);
+    }
+    console.log(dim(`        ${task.completedAt} | ${task.source} | ${task.id}`));
+    console.log();
   }
 }
 
@@ -352,6 +379,9 @@ async function main(): Promise<void> {
     case "sessions":
       await sessions();
       return;
+    case "history":
+      await history();
+      return;
     case "help":
     case "--help":
     case "-h":
@@ -408,10 +438,6 @@ async function main(): Promise<void> {
 
     case "status":
       await status(sessionDir);
-      break;
-
-    case "history":
-      await history(sessionDir);
       break;
 
     case "clear":
