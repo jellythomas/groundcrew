@@ -414,12 +414,54 @@ function chatCompleter(line) {
   }
   return [[], line];
 }
+function setupInlineSuggestions(rl) {
+  let lastGhostLen = 0;
+  const clearGhost = () => {
+    if (lastGhostLen > 0) {
+      process.stdout.write("\x1B[" + lastGhostLen + "D");
+      process.stdout.write("\x1B[0K");
+      lastGhostLen = 0;
+    }
+  };
+  const showGhost = () => {
+    const line = rl.line;
+    if (!line || !line.startsWith("/") || line.includes(" ")) {
+      clearGhost();
+      return;
+    }
+    const matches = CHAT_COMMANDS.filter((c) => c.cmd.startsWith(line));
+    if (matches.length === 0) {
+      clearGhost();
+      return;
+    }
+    const best = matches[0];
+    const ghost = best.cmd.slice(line.length);
+    const hint = ghost + dim(` \u2014 ${best.desc}`);
+    const rawLen = ghost.length + ` \u2014 ${best.desc}`.length;
+    clearGhost();
+    if (ghost || matches.length > 0) {
+      process.stdout.write(`\x1B[2m${ghost} \u2014 ${best.desc}\x1B[0m`);
+      lastGhostLen = rawLen;
+      process.stdout.write("\x1B[" + rawLen + "D");
+    }
+  };
+  process.stdin.on("keypress", (_ch, key) => {
+    if (!key) return;
+    clearGhost();
+    if (key.name !== "return" && key.name !== "tab" && key.name !== "backspace") {
+      setImmediate(showGhost);
+    } else if (key.name === "backspace") {
+      setImmediate(showGhost);
+    }
+  });
+}
 async function chat(explicitSession) {
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
     completer: chatCompleter
   });
+  setupInlineSuggestions(rl);
   let current = null;
   if (explicitSession) {
     const dir = path.join(SESSIONS_DIR, explicitSession);
