@@ -1,23 +1,20 @@
 import fs from "fs/promises";
 import { existsSync, watch, type FSWatcher } from "fs";
-import path from "path";
-import { ensureGroundcrewDir } from "./queue.js";
-
-const GROUNDCREW_DIR = ".groundcrew";
-const FEEDBACK_FILE = path.join(GROUNDCREW_DIR, "feedback.md");
+import { getSessionDir, getFeedbackFile } from "./paths.js";
 
 let lastFeedbackModified = 0;
 
 export async function initFeedbackFile(): Promise<void> {
-  await ensureGroundcrewDir();
-  if (!existsSync(FEEDBACK_FILE)) {
+  await fs.mkdir(getSessionDir(), { recursive: true });
+  const feedbackFile = getFeedbackFile();
+  if (!existsSync(feedbackFile)) {
     await fs.writeFile(
-      FEEDBACK_FILE,
+      feedbackFile,
       "<!-- Write your feedback below. Save the file to send it to the agent. -->\n\n"
     );
   }
   try {
-    const stat = await fs.stat(FEEDBACK_FILE);
+    const stat = await fs.stat(feedbackFile);
     lastFeedbackModified = stat.mtimeMs;
   } catch {
     lastFeedbackModified = 0;
@@ -25,19 +22,19 @@ export async function initFeedbackFile(): Promise<void> {
 }
 
 export async function getFeedback(timeoutMs: number): Promise<string | null> {
+  const feedbackFile = getFeedbackFile();
   await initFeedbackFile();
 
   // Check if file has been modified since last read
   try {
-    const stat = await fs.stat(FEEDBACK_FILE);
+    const stat = await fs.stat(feedbackFile);
     if (stat.mtimeMs > lastFeedbackModified) {
       lastFeedbackModified = stat.mtimeMs;
-      const content = await fs.readFile(FEEDBACK_FILE, "utf-8");
+      const content = await fs.readFile(feedbackFile, "utf-8");
       const cleaned = stripComments(content).trim();
       if (cleaned.length > 0) {
-        // Clear the file after reading
         await fs.writeFile(
-          FEEDBACK_FILE,
+          feedbackFile,
           "<!-- Feedback received. Write new feedback below. -->\n\n"
         );
         return cleaned;
@@ -59,14 +56,14 @@ export async function getFeedback(timeoutMs: number): Promise<string | null> {
 
     const checkFeedback = async () => {
       try {
-        const stat = await fs.stat(FEEDBACK_FILE);
+        const stat = await fs.stat(feedbackFile);
         if (stat.mtimeMs > lastFeedbackModified) {
           lastFeedbackModified = stat.mtimeMs;
-          const content = await fs.readFile(FEEDBACK_FILE, "utf-8");
+          const content = await fs.readFile(feedbackFile, "utf-8");
           const cleaned = stripComments(content).trim();
           if (cleaned.length > 0) {
             await fs.writeFile(
-              FEEDBACK_FILE,
+              feedbackFile,
               "<!-- Feedback received. Write new feedback below. -->\n\n"
             );
             cleanup();
@@ -78,7 +75,7 @@ export async function getFeedback(timeoutMs: number): Promise<string | null> {
       }
     };
 
-    watcher = watch(FEEDBACK_FILE, { persistent: true }, () => {
+    watcher = watch(feedbackFile, { persistent: true }, () => {
       checkFeedback();
     });
 

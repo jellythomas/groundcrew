@@ -14,7 +14,6 @@ import {
   markTaskDone,
   listPending,
   listCompleted,
-  ensureGroundcrewDir,
 } from "./queue.js";
 import { getFeedback, initFeedbackFile } from "./feedback.js";
 import {
@@ -24,6 +23,7 @@ import {
   getStatus,
   updateSession,
 } from "./session.js";
+import { initSession, cleanupSession, getSessionId } from "./paths.js";
 
 // Config from environment
 const TASK_TIMEOUT = parseInt(process.env.GROUNDCREW_TASK_TIMEOUT || "300000");
@@ -153,6 +153,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 type: "text" as const,
                 text: JSON.stringify({
                   status: "task_available",
+                  session_id: getSessionId(),
                   task_id: task.id,
                   task: task.task,
                   source: task.source,
@@ -324,6 +325,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           {
             type: "text" as const,
             text: JSON.stringify({
+              session_id: getSessionId(),
               session_status: session.status,
               active_minutes: session.activeMinutes,
               pending: pending.map((t) => ({
@@ -351,12 +353,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 // ── Start Server ──────────────────────────────────────────────────────────────
 
 async function main() {
-  await ensureGroundcrewDir();
+  const sid = await initSession();
+  await updateSession({ sessionId: sid, status: "active" });
   await initFeedbackFile();
+
+  // Cleanup on exit
+  const onExit = async () => { await cleanupSession(); process.exit(0); };
+  process.on("SIGINT", onExit);
+  process.on("SIGTERM", onExit);
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("Groundcrew MCP server running on stdio");
+  console.error(`Groundcrew MCP server running — session: ${sid}`);
 }
 
 main().catch((err) => {

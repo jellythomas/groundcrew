@@ -3223,8 +3223,8 @@ var require_utils = __commonJS({
       }
       return ind;
     }
-    function removeDotSegments(path4) {
-      let input = path4;
+    function removeDotSegments(path2) {
+      let input = path2;
       const output = [];
       let nextSlash = -1;
       let len = 0;
@@ -3423,8 +3423,8 @@ var require_schemes = __commonJS({
         wsComponent.secure = void 0;
       }
       if (wsComponent.resourceName) {
-        const [path4, query] = wsComponent.resourceName.split("?");
-        wsComponent.path = path4 && path4 !== "/" ? path4 : void 0;
+        const [path2, query] = wsComponent.resourceName.split("?");
+        wsComponent.path = path2 && path2 !== "/" ? path2 : void 0;
         wsComponent.query = query;
         wsComponent.resourceName = void 0;
       }
@@ -6786,12 +6786,12 @@ var require_dist = __commonJS({
         throw new Error(`Unknown format "${name}"`);
       return f;
     };
-    function addFormats(ajv, list, fs4, exportName) {
+    function addFormats(ajv, list, fs5, exportName) {
       var _a;
       var _b;
       (_a = (_b = ajv.opts.code).formats) !== null && _a !== void 0 ? _a : _b.formats = (0, codegen_1._)`require("ajv-formats/dist/formats").${exportName}`;
       for (const f of list)
-        ajv.addFormat(f, fs4[f]);
+        ajv.addFormat(f, fs5[f]);
     }
     module.exports = exports = formatsPlugin;
     Object.defineProperty(exports, "__esModule", { value: true });
@@ -6995,10 +6995,10 @@ function assignProp(target, prop, value) {
     configurable: true
   });
 }
-function getElementAtPath(obj, path4) {
-  if (!path4)
+function getElementAtPath(obj, path2) {
+  if (!path2)
     return obj;
-  return path4.reduce((acc, key) => acc?.[key], obj);
+  return path2.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -7318,11 +7318,11 @@ function aborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path4, issues) {
+function prefixIssues(path2, issues) {
   return issues.map((iss) => {
     var _a;
     (_a = iss).path ?? (_a.path = []);
-    iss.path.unshift(path4);
+    iss.path.unshift(path2);
     return iss;
   });
 }
@@ -12956,21 +12956,21 @@ var Protocol = class {
    * the error appropriately (e.g., by failing the task, logging, etc.). The Protocol layer
    * simply propagates the error.
    */
-  async _enqueueTaskMessage(taskId, message, sessionId) {
+  async _enqueueTaskMessage(taskId, message, sessionId2) {
     if (!this._taskStore || !this._taskMessageQueue) {
       throw new Error("Cannot enqueue task message: taskStore and taskMessageQueue are not configured");
     }
     const maxQueueSize = this._options?.maxTaskQueueSize;
-    await this._taskMessageQueue.enqueue(taskId, message, sessionId, maxQueueSize);
+    await this._taskMessageQueue.enqueue(taskId, message, sessionId2, maxQueueSize);
   }
   /**
    * Clears the message queue for a task and rejects any pending request resolvers.
    * @param taskId The task ID whose queue should be cleared
    * @param sessionId Optional session ID for binding the operation to a specific session
    */
-  async _clearTaskQueue(taskId, sessionId) {
+  async _clearTaskQueue(taskId, sessionId2) {
     if (this._taskMessageQueue) {
-      const messages = await this._taskMessageQueue.dequeueAll(taskId, sessionId);
+      const messages = await this._taskMessageQueue.dequeueAll(taskId, sessionId2);
       for (const message of messages) {
         if (message.type === "request" && isJSONRPCRequest(message.message)) {
           const requestId = message.message.id;
@@ -13013,7 +13013,7 @@ var Protocol = class {
       }, { once: true });
     });
   }
-  requestTaskStore(request, sessionId) {
+  requestTaskStore(request, sessionId2) {
     const taskStore = this._taskStore;
     if (!taskStore) {
       throw new Error("No task store configured");
@@ -13026,18 +13026,18 @@ var Protocol = class {
         return await taskStore.createTask(taskParams, request.id, {
           method: request.method,
           params: request.params
-        }, sessionId);
+        }, sessionId2);
       },
       getTask: async (taskId) => {
-        const task = await taskStore.getTask(taskId, sessionId);
+        const task = await taskStore.getTask(taskId, sessionId2);
         if (!task) {
           throw new McpError(ErrorCode.InvalidParams, "Failed to retrieve task: Task not found");
         }
         return task;
       },
       storeTaskResult: async (taskId, status, result) => {
-        await taskStore.storeTaskResult(taskId, status, result, sessionId);
-        const task = await taskStore.getTask(taskId, sessionId);
+        await taskStore.storeTaskResult(taskId, status, result, sessionId2);
+        const task = await taskStore.getTask(taskId, sessionId2);
         if (task) {
           const notification = TaskStatusNotificationSchema.parse({
             method: "notifications/tasks/status",
@@ -13050,18 +13050,18 @@ var Protocol = class {
         }
       },
       getTaskResult: (taskId) => {
-        return taskStore.getTaskResult(taskId, sessionId);
+        return taskStore.getTaskResult(taskId, sessionId2);
       },
       updateTaskStatus: async (taskId, status, statusMessage) => {
-        const task = await taskStore.getTask(taskId, sessionId);
+        const task = await taskStore.getTask(taskId, sessionId2);
         if (!task) {
           throw new McpError(ErrorCode.InvalidParams, `Task "${taskId}" not found - it may have been cleaned up`);
         }
         if (isTerminal(task.status)) {
           throw new McpError(ErrorCode.InvalidParams, `Cannot update task "${taskId}" from terminal status "${task.status}" to "${status}". Terminal states (completed, failed, cancelled) cannot transition to other states.`);
         }
-        await taskStore.updateTaskStatus(taskId, status, statusMessage, sessionId);
-        const updatedTask = await taskStore.getTask(taskId, sessionId);
+        await taskStore.updateTaskStatus(taskId, status, statusMessage, sessionId2);
+        const updatedTask = await taskStore.getTask(taskId, sessionId2);
         if (updatedTask) {
           const notification = TaskStatusNotificationSchema.parse({
             method: "notifications/tasks/status",
@@ -13074,7 +13074,7 @@ var Protocol = class {
         }
       },
       listTasks: (cursor) => {
-        return taskStore.listTasks(cursor, sessionId);
+        return taskStore.listTasks(cursor, sessionId2);
       }
     };
   }
@@ -13425,8 +13425,8 @@ var Server = class extends Protocol {
     this._serverInfo = _serverInfo;
     this._loggingLevels = /* @__PURE__ */ new Map();
     this.LOG_LEVEL_SEVERITY = new Map(LoggingLevelSchema.options.map((level, index) => [level, index]));
-    this.isMessageIgnored = (level, sessionId) => {
-      const currentLevel = this._loggingLevels.get(sessionId);
+    this.isMessageIgnored = (level, sessionId2) => {
+      const currentLevel = this._loggingLevels.get(sessionId2);
       return currentLevel ? this.LOG_LEVEL_SEVERITY.get(level) < this.LOG_LEVEL_SEVERITY.get(currentLevel) : false;
     };
     this._capabilities = options?.capabilities ?? {};
@@ -13769,9 +13769,9 @@ var Server = class extends Protocol {
    * @param params
    * @param sessionId optional for stateless and backward compatibility
    */
-  async sendLoggingMessage(params, sessionId) {
+  async sendLoggingMessage(params, sessionId2) {
     if (this._capabilities.logging) {
-      if (!this.isMessageIgnored(params.level, sessionId)) {
+      if (!this.isMessageIgnored(params.level, sessionId2)) {
         return this.notification({ method: "notifications/message", params });
       }
     }
@@ -13888,30 +13888,88 @@ var StdioServerTransport = class {
 };
 
 // src/queue.ts
+import fs2 from "fs/promises";
+import { watch } from "fs";
+
+// src/paths.ts
 import fs from "fs/promises";
-import { existsSync, watch } from "fs";
 import path from "path";
+import crypto from "crypto";
 var GROUNDCREW_DIR = ".groundcrew";
-var QUEUE_FILE = path.join(GROUNDCREW_DIR, "queue.json");
+var SESSIONS_DIR = path.join(GROUNDCREW_DIR, "sessions");
+var ACTIVE_SESSION_FILE = path.join(GROUNDCREW_DIR, "active-sessions.json");
+var sessionId = null;
+var sessionDir = null;
+function generateSessionId() {
+  return crypto.randomBytes(4).toString("hex");
+}
+async function initSession() {
+  sessionId = generateSessionId();
+  sessionDir = path.join(SESSIONS_DIR, sessionId);
+  await fs.mkdir(sessionDir, { recursive: true });
+  const activeSessions = await readActiveSessions();
+  activeSessions[sessionId] = {
+    started: (/* @__PURE__ */ new Date()).toISOString(),
+    pid: process.pid,
+    cwd: process.cwd()
+  };
+  await fs.mkdir(GROUNDCREW_DIR, { recursive: true });
+  await fs.writeFile(ACTIVE_SESSION_FILE, JSON.stringify(activeSessions, null, 2));
+  return sessionId;
+}
+async function cleanupSession() {
+  if (!sessionId) return;
+  try {
+    const activeSessions = await readActiveSessions();
+    delete activeSessions[sessionId];
+    await fs.writeFile(ACTIVE_SESSION_FILE, JSON.stringify(activeSessions, null, 2));
+  } catch {
+  }
+}
+function getSessionId() {
+  if (!sessionId) throw new Error("Session not initialized. Call initSession() first.");
+  return sessionId;
+}
+function getSessionDir() {
+  if (!sessionDir) throw new Error("Session not initialized. Call initSession() first.");
+  return sessionDir;
+}
+function getQueueFile() {
+  return path.join(getSessionDir(), "queue.json");
+}
+function getFeedbackFile() {
+  return path.join(getSessionDir(), "feedback.md");
+}
+function getSessionFile() {
+  return path.join(getSessionDir(), "session.json");
+}
+function getStatusFile() {
+  return path.join(getSessionDir(), "status.json");
+}
+async function readActiveSessions() {
+  try {
+    const raw = await fs.readFile(ACTIVE_SESSION_FILE, "utf-8");
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
+}
+
+// src/queue.ts
 function emptyQueue() {
   return { tasks: [], completed: [] };
 }
-async function ensureGroundcrewDir() {
-  if (!existsSync(GROUNDCREW_DIR)) {
-    await fs.mkdir(GROUNDCREW_DIR, { recursive: true });
-  }
-}
 async function readQueue() {
   try {
-    const raw = await fs.readFile(QUEUE_FILE, "utf-8");
+    const raw = await fs2.readFile(getQueueFile(), "utf-8");
     return JSON.parse(raw);
   } catch {
     return emptyQueue();
   }
 }
 async function writeQueue(data) {
-  await ensureGroundcrewDir();
-  await fs.writeFile(QUEUE_FILE, JSON.stringify(data, null, 2));
+  await fs2.mkdir(getSessionDir(), { recursive: true });
+  await fs2.writeFile(getQueueFile(), JSON.stringify(data, null, 2));
 }
 async function populateQueue(steps, source = "plan") {
   const queue = await readQueue();
@@ -13928,18 +13986,23 @@ async function populateQueue(steps, source = "plan") {
   return tasks;
 }
 async function getNextTask(timeoutMs) {
+  const queueFile = getQueueFile();
   const queue = await readQueue();
   if (queue.tasks.length > 0) {
     const task = queue.tasks.shift();
     await writeQueue(queue);
     return task;
   }
+  await fs2.writeFile(queueFile, JSON.stringify(emptyQueue()), { flag: "wx" }).catch(() => {
+  });
   return new Promise((resolve) => {
     let watcher;
     let timer;
+    let poll;
     const cleanup = () => {
       watcher?.close();
       if (timer) clearTimeout(timer);
+      if (poll) clearInterval(poll);
     };
     const checkQueue = async () => {
       try {
@@ -13953,26 +14016,16 @@ async function getNextTask(timeoutMs) {
       } catch {
       }
     };
-    ensureGroundcrewDir().then(
-      () => fs.writeFile(QUEUE_FILE, JSON.stringify(emptyQueue()), { flag: "wx" }).catch(() => {
-      })
-    ).then(() => {
-      watcher = watch(QUEUE_FILE, { persistent: true }, () => {
-        checkQueue();
-      });
-      const poll = setInterval(() => {
-        checkQueue().then(() => {
-        });
-      }, 2e3);
-      timer = setTimeout(() => {
-        cleanup();
-        clearInterval(poll);
-        resolve(null);
-      }, timeoutMs);
-      const origCleanup = cleanup;
-      cleanup.__poll = poll;
-      watcher.on("close", () => clearInterval(poll));
+    watcher = watch(queueFile, { persistent: true }, () => {
+      checkQueue();
     });
+    poll = setInterval(() => {
+      checkQueue();
+    }, 2e3);
+    timer = setTimeout(() => {
+      cleanup();
+      resolve(null);
+    }, timeoutMs);
   });
 }
 async function markTaskDone(taskId, summary) {
@@ -13997,38 +14050,37 @@ async function listCompleted() {
 }
 
 // src/feedback.ts
-import fs2 from "fs/promises";
+import fs3 from "fs/promises";
 import { existsSync as existsSync2, watch as watch2 } from "fs";
-import path2 from "path";
-var GROUNDCREW_DIR2 = ".groundcrew";
-var FEEDBACK_FILE = path2.join(GROUNDCREW_DIR2, "feedback.md");
 var lastFeedbackModified = 0;
 async function initFeedbackFile() {
-  await ensureGroundcrewDir();
-  if (!existsSync2(FEEDBACK_FILE)) {
-    await fs2.writeFile(
-      FEEDBACK_FILE,
+  await fs3.mkdir(getSessionDir(), { recursive: true });
+  const feedbackFile = getFeedbackFile();
+  if (!existsSync2(feedbackFile)) {
+    await fs3.writeFile(
+      feedbackFile,
       "<!-- Write your feedback below. Save the file to send it to the agent. -->\n\n"
     );
   }
   try {
-    const stat = await fs2.stat(FEEDBACK_FILE);
+    const stat = await fs3.stat(feedbackFile);
     lastFeedbackModified = stat.mtimeMs;
   } catch {
     lastFeedbackModified = 0;
   }
 }
 async function getFeedback(timeoutMs) {
+  const feedbackFile = getFeedbackFile();
   await initFeedbackFile();
   try {
-    const stat = await fs2.stat(FEEDBACK_FILE);
+    const stat = await fs3.stat(feedbackFile);
     if (stat.mtimeMs > lastFeedbackModified) {
       lastFeedbackModified = stat.mtimeMs;
-      const content = await fs2.readFile(FEEDBACK_FILE, "utf-8");
+      const content = await fs3.readFile(feedbackFile, "utf-8");
       const cleaned = stripComments(content).trim();
       if (cleaned.length > 0) {
-        await fs2.writeFile(
-          FEEDBACK_FILE,
+        await fs3.writeFile(
+          feedbackFile,
           "<!-- Feedback received. Write new feedback below. -->\n\n"
         );
         return cleaned;
@@ -14045,14 +14097,14 @@ async function getFeedback(timeoutMs) {
     };
     const checkFeedback = async () => {
       try {
-        const stat = await fs2.stat(FEEDBACK_FILE);
+        const stat = await fs3.stat(feedbackFile);
         if (stat.mtimeMs > lastFeedbackModified) {
           lastFeedbackModified = stat.mtimeMs;
-          const content = await fs2.readFile(FEEDBACK_FILE, "utf-8");
+          const content = await fs3.readFile(feedbackFile, "utf-8");
           const cleaned = stripComments(content).trim();
           if (cleaned.length > 0) {
-            await fs2.writeFile(
-              FEEDBACK_FILE,
+            await fs3.writeFile(
+              feedbackFile,
               "<!-- Feedback received. Write new feedback below. -->\n\n"
             );
             cleanup();
@@ -14062,7 +14114,7 @@ async function getFeedback(timeoutMs) {
       } catch {
       }
     };
-    watcher = watch2(FEEDBACK_FILE, { persistent: true }, () => {
+    watcher = watch2(feedbackFile, { persistent: true }, () => {
       checkFeedback();
     });
     timer = setTimeout(() => {
@@ -14076,17 +14128,14 @@ function stripComments(text) {
 }
 
 // src/session.ts
-import fs3 from "fs/promises";
-import path3 from "path";
-var GROUNDCREW_DIR3 = ".groundcrew";
-var SESSION_FILE = path3.join(GROUNDCREW_DIR3, "session.json");
-var STATUS_FILE = path3.join(GROUNDCREW_DIR3, "status.json");
+import fs4 from "fs/promises";
 async function readSession() {
   try {
-    const raw = await fs3.readFile(SESSION_FILE, "utf-8");
+    const raw = await fs4.readFile(getSessionFile(), "utf-8");
     return JSON.parse(raw);
   } catch {
     return {
+      sessionId: "",
       started: (/* @__PURE__ */ new Date()).toISOString(),
       tasksCompleted: 0,
       status: "active"
@@ -14094,18 +14143,18 @@ async function readSession() {
   }
 }
 async function updateSession(updates) {
-  await ensureGroundcrewDir();
+  await fs4.mkdir(getSessionDir(), { recursive: true });
   const session = await readSession();
   Object.assign(session, updates, { lastActivity: (/* @__PURE__ */ new Date()).toISOString() });
   const startTime = new Date(session.started).getTime();
   session.activeMinutes = Math.round(
     (Date.now() - startTime) / (1e3 * 60)
   );
-  await fs3.writeFile(SESSION_FILE, JSON.stringify(session, null, 2));
+  await fs4.writeFile(getSessionFile(), JSON.stringify(session, null, 2));
   return session;
 }
 async function reportStatus(taskId, message, progress) {
-  await ensureGroundcrewDir();
+  await fs4.mkdir(getSessionDir(), { recursive: true });
   const report = {
     taskId,
     message,
@@ -14114,12 +14163,12 @@ async function reportStatus(taskId, message, progress) {
   };
   let reports = [];
   try {
-    const raw = await fs3.readFile(STATUS_FILE, "utf-8");
+    const raw = await fs4.readFile(getStatusFile(), "utf-8");
     reports = JSON.parse(raw);
   } catch {
   }
   reports.push(report);
-  await fs3.writeFile(STATUS_FILE, JSON.stringify(reports, null, 2));
+  await fs4.writeFile(getStatusFile(), JSON.stringify(reports, null, 2));
   const session = await updateSession({ currentTask: taskId });
   let warning;
   if (session.activeMinutes && session.activeMinutes >= 120) {
@@ -14140,7 +14189,7 @@ async function getStatus() {
   const session = await readSession();
   let reports = [];
   try {
-    const raw = await fs3.readFile(STATUS_FILE, "utf-8");
+    const raw = await fs4.readFile(getStatusFile(), "utf-8");
     reports = JSON.parse(raw);
   } catch {
   }
@@ -14252,6 +14301,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 type: "text",
                 text: JSON.stringify({
                   status: "task_available",
+                  session_id: getSessionId(),
                   task_id: task.id,
                   task: task.task,
                   source: task.source,
@@ -14399,6 +14449,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           {
             type: "text",
             text: JSON.stringify({
+              session_id: getSessionId(),
               session_status: session.status,
               active_minutes: session.activeMinutes,
               pending: pending.map((t) => ({
@@ -14422,11 +14473,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 });
 async function main() {
-  await ensureGroundcrewDir();
+  const sid = await initSession();
+  await updateSession({ sessionId: sid, status: "active" });
   await initFeedbackFile();
+  const onExit = async () => {
+    await cleanupSession();
+    process.exit(0);
+  };
+  process.on("SIGINT", onExit);
+  process.on("SIGTERM", onExit);
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("Groundcrew MCP server running on stdio");
+  console.error(`Groundcrew MCP server running \u2014 session: ${sid}`);
 }
 main().catch((err) => {
   console.error("Fatal:", err);
