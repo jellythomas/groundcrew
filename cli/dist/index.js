@@ -41,6 +41,38 @@ function getGitContext() {
     return null;
   }
 }
+function pasteFromClipboard(sessionDir) {
+  try {
+    const text = execFileSync("pbpaste", [], { encoding: "utf8", timeout: 1e3, stdio: ["pipe", "pipe", "pipe"] }).replace(/\r\n/g, "\n");
+    if (text) return { type: "text", text };
+  } catch {
+  }
+  if (process.platform !== "darwin") return null;
+  try {
+    const check = execFileSync("osascript", [
+      "-e",
+      'try\nthe clipboard as \xABclass PNGf\xBB\nreturn "image"\non error\nreturn "none"\nend try'
+    ], { encoding: "utf8", timeout: 2e3, stdio: ["pipe", "pipe", "pipe"] }).trim();
+    if (check !== "image") return null;
+    const attachDir = path.join(sessionDir, "attachments");
+    try {
+      execFileSync("mkdir", ["-p", attachDir]);
+    } catch {
+    }
+    const fname = `clipboard-${Date.now()}.png`;
+    const fpath = path.join(attachDir, fname);
+    execFileSync("osascript", ["-e", `
+set theFile to POSIX file "${fpath}"
+set imageData to the clipboard as \xABclass PNGf\xBB
+set fp to open for access theFile with write permission
+set eof fp to 0
+write imageData to fp
+close access fp`], { timeout: 3e3, stdio: ["pipe", "pipe", "pipe"] });
+    return { type: "image", path: fpath };
+  } catch {
+    return null;
+  }
+}
 var GROUNDCREW_DIR = ".groundcrew";
 var SESSIONS_DIR = path.join(GROUNDCREW_DIR, "sessions");
 var ACTIVE_SESSIONS_FILE = path.join(GROUNDCREW_DIR, "active-sessions.json");
@@ -462,7 +494,7 @@ var CHAT_COMMANDS = [
   { cmd: "/clear", desc: "Clear pending tasks" },
   { cmd: "/exit", desc: "Exit chat" }
 ];
-function readMultilineInput(sessionId, projectName, gitCtx) {
+function readMultilineInput(sessionId, projectName, gitCtx, sessionDir) {
   return new Promise((resolve) => {
     const lines = [""];
     let crow = 0;
@@ -741,6 +773,15 @@ function readMultilineInput(sessionId, projectName, gitCtx) {
                   render();
                   i += seqLen;
                   continue;
+                case 118:
+                  {
+                    const clip = pasteFromClipboard(sessionDir);
+                    if (clip?.type === "text") insertText(clip.text);
+                    else if (clip?.type === "image") insertText(`[\u{1F4F7} ${clip.path}]`);
+                    render();
+                  }
+                  i += seqLen;
+                  continue;
                 default:
                   break;
               }
@@ -823,6 +864,14 @@ function readMultilineInput(sessionId, projectName, gitCtx) {
         if (str[i] === "\f") {
           process.stdout.write("\x1B[2J\x1B[H");
           lastTermRow = 0;
+          render();
+          i++;
+          continue;
+        }
+        if (str[i] === "") {
+          const clip = pasteFromClipboard(sessionDir);
+          if (clip?.type === "text") insertText(clip.text);
+          else if (clip?.type === "image") insertText(`[\u{1F4F7} ${clip.path}]`);
           render();
           i++;
           continue;
@@ -970,7 +1019,7 @@ async function chat(explicitSession) {
   };
   while (true) {
     const gitCtx = getGitContext();
-    const text = await readMultilineInput(current.id, projectName, gitCtx);
+    const text = await readMultilineInput(current.id, projectName, gitCtx, current.dir);
     if (text === null) exitChat();
     if (!text) continue;
     const trimmed = text.trim();

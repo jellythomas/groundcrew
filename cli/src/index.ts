@@ -36,6 +36,38 @@ function getGitContext(): { branch: string; dirty: string } | null {
   }
 }
 
+// Clipboard paste with image support (macOS)
+function pasteFromClipboard(sessionDir: string): { type: "text"; text: string } | { type: "image"; path: string } | null {
+  // Try text first (fast)
+  try {
+    const text = execFileSync("pbpaste", [], { encoding: "utf8", timeout: 1000, stdio: ["pipe", "pipe", "pipe"] }).replace(/\r\n/g, "\n");
+    if (text) return { type: "text", text };
+  } catch { /* no text */ }
+
+  // Check for image in clipboard
+  if (process.platform !== "darwin") return null;
+  try {
+    const check = execFileSync("osascript", ["-e",
+      'try\nthe clipboard as «class PNGf»\nreturn "image"\non error\nreturn "none"\nend try',
+    ], { encoding: "utf8", timeout: 2000, stdio: ["pipe", "pipe", "pipe"] }).trim();
+    if (check !== "image") return null;
+
+    // Save image to session attachments dir
+    const attachDir = path.join(sessionDir, "attachments");
+    try { execFileSync("mkdir", ["-p", attachDir]); } catch { /* exists */ }
+    const fname = `clipboard-${Date.now()}.png`;
+    const fpath = path.join(attachDir, fname);
+    execFileSync("osascript", ["-e", `
+set theFile to POSIX file "${fpath}"
+set imageData to the clipboard as «class PNGf»
+set fp to open for access theFile with write permission
+set eof fp to 0
+write imageData to fp
+close access fp`], { timeout: 3000, stdio: ["pipe", "pipe", "pipe"] });
+    return { type: "image", path: fpath };
+  } catch { return null; }
+}
+
 // Resolved at startup by resolveRoot() — git-aware project root discovery
 let GROUNDCREW_DIR = ".groundcrew";
 let SESSIONS_DIR = path.join(GROUNDCREW_DIR, "sessions");
@@ -607,7 +639,7 @@ const CHAT_COMMANDS: Array<{ cmd: string; desc: string }> = [
  * Tab: slash command completion
  * Paste: bracketed paste with multiline support
  */
-function readMultilineInput(sessionId: string, projectName: string, gitCtx: { branch: string; dirty: string } | null): Promise<string | null> {
+function readMultilineInput(sessionId: string, projectName: string, gitCtx: { branch: string; dirty: string } | null, sessionDir: string): Promise<string | null> {
   return new Promise((resolve) => {
     const lines: string[] = [""];
     let crow = 0;  // cursor row in lines[]
@@ -868,6 +900,12 @@ function readMultilineInput(sessionId: string, projectName: string, gitCtx: { br
                   process.stdout.write("\x1b[2J\x1b[H");
                   lastTermRow = 0; render();
                   i += seqLen; continue;
+                case 118: // Ctrl+V — paste from clipboard
+                  { const clip = pasteFromClipboard(sessionDir);
+                    if (clip?.type === "text") insertText(clip.text);
+                    else if (clip?.type === "image") insertText(`[📷 ${clip.path}]`);
+                    render(); }
+                  i += seqLen; continue;
                 default: break;
               }
             }
@@ -929,6 +967,13 @@ function readMultilineInput(sessionId: string, projectName: string, gitCtx: { br
         if (str[i] === "\x0c") {
           process.stdout.write("\x1b[2J\x1b[H");
           lastTermRow = 0; render(); i++; continue;
+        }
+        // Ctrl+V — paste from clipboard (legacy byte)
+        if (str[i] === "\x16") {
+          const clip = pasteFromClipboard(sessionDir);
+          if (clip?.type === "text") insertText(clip.text);
+          else if (clip?.type === "image") insertText(`[📷 ${clip.path}]`);
+          render(); i++; continue;
         }
 
         // Ctrl+J (LF, 0x0A) — newline (cross-terminal)
@@ -1091,7 +1136,7 @@ async function chat(explicitSession?: string): Promise<void> {
   while (true) {
     // Refresh git context each turn (branch may change between prompts)
     const gitCtx = getGitContext();
-    const text = await readMultilineInput(current.id, projectName, gitCtx);
+    const text = await readMultilineInput(current.id, projectName, gitCtx, current.dir);
 
     if (text === null) exitChat();
     if (!text) continue;
