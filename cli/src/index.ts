@@ -238,11 +238,6 @@ const red = (t: string) => color(31, t);
 
 // ── Commands ──────────────────────────────────────────────────────────────────
 
-async function init(): Promise<void> {
-  await fs.mkdir(SESSIONS_DIR, { recursive: true });
-  console.log(green("Groundcrew initialized.") + ` ${dim(GROUNDCREW_HOME + "/ ready")}`);
-}
-
 async function add(taskText: string, priority: number, sessionDir: string): Promise<void> {
   const queue = await readQueue(sessionDir);
   const task: Task = {
@@ -1251,7 +1246,6 @@ ${bold("groundcrew")} — CLI companion for the Groundcrew Copilot plugin
 ${bold("Usage:")}
   groundcrew chat                              Interactive chat mode (recommended)
   groundcrew chat --session <id>               Chat with a specific session
-  groundcrew init                              Initialize ~/.groundcrew/ (centralized)
   groundcrew add <task>                        Add a task to the queue
   groundcrew add --priority <task>             Add an urgent task (processed first)
   groundcrew add --session <id> <task>         Add to a specific session
@@ -1305,9 +1299,6 @@ async function main(): Promise<void> {
 
   // Commands that don't need a session (handle their own resolution)
   switch (command) {
-    case "init":
-      await init();
-      return;
     case "chat":
       await chat(explicitSession);
       return;
