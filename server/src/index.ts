@@ -90,11 +90,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: "get_task",
       description:
-        "Get the next task from the Groundcrew queue. Blocks until a task is available (polls every 1s). " +
+        "Get the next task from the Groundcrew queue. Blocks until a task is available or session times out. " +
         "The timeout is configured server-side (default 90 min) — do NOT pass timeout_ms. " +
         "PROTOCOL: This is the core of the Groundcrew loop. After you finish executing a task " +
         "and call mark_done, you MUST call get_task again to continue. " +
-        "Between mark_done and get_task, briefly display the completed task's result to the user. " +
         "Never stop the loop unless get_task returns session_ended, or the user says 'stop'. " +
         "Between major steps of a task, call get_feedback to check for user corrections.",
       inputSchema: {
@@ -222,11 +221,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
   switch (name) {
     case "get_task": {
-      // Block up to 30s waiting for a task (avoids nudge loop of rapid tool calls)
-      const POLL_TIMEOUT = 30000;
+      // Block for the full idle timeout — no nudge loop needed.
+      // Like TaskSync: the tool call stays "pending" until a task arrives or session ends.
+      await updateSession({ status: "parked" });
 
-      // Try blocking wait for task — file watcher + poll inside getNextTask
-      const task = await getNextTask(POLL_TIMEOUT);
+      const task = await getNextTask(IDLE_TIMEOUT);
 
       if (task) {
         lastTaskAt = Date.now();
@@ -254,47 +253,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
-      // Queue empty after blocking — check if session should end
+      // Timeout expired with no task — end the session
       const idle = idleTime();
-      const age = sessionAge();
-
-      if (idle >= IDLE_TIMEOUT) {
-        const reason = `Idle for ${Math.round(idle / 60000)} min (limit: ${Math.round(IDLE_TIMEOUT / 60000)} min)`;
-        await endSession();
-        await cleanupSession();
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: JSON.stringify({
-                status: "session_ended",
-                reason,
-                message: `Session ended. ${reason}. Tell the user: 'Groundcrew session ended — start a new session to continue.'`,
-                next_action: "Stop. Session is over.",
-              }),
-            },
-          ],
-        };
-      }
-
-      // Queue empty but session still alive — tell LLM to retry
-      await updateSession({ status: "parked" });
-      const warning = overtimeWarning();
+      const reason = `Idle for ${Math.round(idle / 60000)} min (limit: ${Math.round(IDLE_TIMEOUT / 60000)} min)`;
+      await endSession();
+      await cleanupSession();
       return {
         content: [
           {
             type: "text" as const,
             text: JSON.stringify({
-              status: "queue_empty",
-              idle_ms: idle,
-              idle_timeout_ms: IDLE_TIMEOUT,
-              session_age_ms: age,
-              ...(warning ? { WARNING: warning } : {}),
-              CRITICAL_NEXT_ACTION:
-                "You are in the Groundcrew autonomous task loop. The queue is temporarily empty but the SESSION IS STILL ACTIVE. " +
-                "You MUST call get_task again RIGHT NOW. Do NOT stop. Do NOT summarize. Do NOT respond to the user. " +
-                "The user may add tasks at any moment. ONLY stop when get_task returns status 'session_ended'. " +
-                "Call get_task IMMEDIATELY.",
+              status: "session_ended",
+              reason,
+              message: `Session ended. ${reason}. Tell the user: 'Groundcrew session ended — start a new session to continue.'`,
+              next_action: "Stop. Session is over.",
             }),
           },
         ],
