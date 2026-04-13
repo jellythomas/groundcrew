@@ -13920,11 +13920,14 @@ var sessionDir = null;
 function generateSessionId() {
   return crypto.randomBytes(4).toString("hex");
 }
-async function initSession() {
+async function initPaths() {
   PROJECT_DIR = await resolveProjectDir();
   GROUNDCREW_DIR = path.join(PROJECT_DIR, ".groundcrew");
   SESSIONS_DIR = path.join(GROUNDCREW_DIR, "sessions");
   ACTIVE_SESSION_FILE = path.join(GROUNDCREW_DIR, "active-sessions.json");
+}
+async function createSession() {
+  if (sessionId) return sessionId;
   sessionId = generateSessionId();
   sessionDir = path.join(SESSIONS_DIR, sessionId);
   await fs.mkdir(sessionDir, { recursive: true });
@@ -13947,11 +13950,11 @@ async function cleanupSession() {
   }
 }
 function getSessionId() {
-  if (!sessionId) throw new Error("Session not initialized. Call initSession() first.");
+  if (!sessionId) throw new Error("No active session. Call the 'start' tool first to create a session.");
   return sessionId;
 }
 function getSessionDir() {
-  if (!sessionDir) throw new Error("Session not initialized. Call initSession() first.");
+  if (!sessionDir) throw new Error("No active session. Call the 'start' tool first to create a session.");
   return sessionDir;
 }
 function getQueueFile() {
@@ -14252,6 +14255,8 @@ async function getStatus() {
 
 // src/index.ts
 var SESSION_TIMEOUT = parseInt(process.env.GROUNDCREW_SESSION_TIMEOUT || "5400000");
+var POLL_WINDOW = 25e3;
+var sessionWaitMs = 0;
 var FEEDBACK_TIMEOUT = 3e4;
 var GROUNDCREW_INSTRUCTIONS = `
 ## Groundcrew \u2014 Autonomous Task Queue for Claude Code
@@ -14391,8 +14396,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
   switch (name) {
     case "get_task": {
-      const task = await getNextTask(SESSION_TIMEOUT);
+      const task = await getNextTask(POLL_WINDOW);
       if (task) {
+        sessionWaitMs = 0;
         cacheActiveTask(task);
         await updateSession({ status: "active", currentTask: task.id });
         const remaining = (await listPending()).length;
@@ -14414,16 +14420,34 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           ]
         };
       }
-      await endSession();
-      await cleanupSession();
+      sessionWaitMs += POLL_WINDOW;
+      if (sessionWaitMs >= SESSION_TIMEOUT) {
+        await endSession();
+        await cleanupSession();
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                status: "session_ended",
+                message: "Session timed out after " + Math.round(SESSION_TIMEOUT / 6e4) + " minutes with no tasks. Session ended and cleaned up. Tell the user: 'Groundcrew session ended \u2014 start a new session to continue.'",
+                next_action: "Stop. Session is over."
+              })
+            }
+          ]
+        };
+      }
+      await updateSession({ status: "parked" });
       return {
         content: [
           {
             type: "text",
             text: JSON.stringify({
-              status: "session_ended",
-              message: "Session timed out after " + Math.round(SESSION_TIMEOUT / 6e4) + " minutes with no tasks. Session ended and cleaned up. Tell the user: 'Groundcrew session ended \u2014 start a new session to continue.'",
-              next_action: "Stop. Session is over."
+              status: "queue_empty",
+              waited_ms: sessionWaitMs,
+              timeout_ms: SESSION_TIMEOUT,
+              message: "No tasks in queue. Waiting for user to add tasks.",
+              next_action: "Call get_task again to continue waiting."
             })
           }
         ]
@@ -14565,7 +14589,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       };
     }
     case "start": {
-      const sid = getSessionId();
+      const sid = await createSession();
+      await initFeedbackFile();
       const initialTask = args?.initial_task;
       await updateSession({ status: "active" });
       if (initialTask) {
@@ -14628,9 +14653,7 @@ Send tasks from another terminal:
   }
 });
 async function main() {
-  const sid = await initSession();
-  await updateSession({ sessionId: sid, status: "active" });
-  await initFeedbackFile();
+  await initPaths();
   const onExit = async () => {
     await cleanupSession();
     process.exit(0);
@@ -14639,7 +14662,7 @@ async function main() {
   process.on("SIGTERM", onExit);
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error(`Groundcrew MCP server running \u2014 session: ${sid}`);
+  console.error("Groundcrew MCP server running \u2014 waiting for start command");
 }
 main().catch((err) => {
   console.error("Fatal:", err);

@@ -518,7 +518,7 @@ const CHAT_COMMANDS: Array<{ cmd: string; desc: string }> = [
   { cmd: "/history",   desc: "Show completed tasks" },
   { cmd: "/queue",     desc: "Show pending tasks" },
   { cmd: "/clear",     desc: "Clear pending tasks" },
-  { cmd: "/quit",      desc: "Exit chat" },
+  { cmd: "/exit",      desc: "Exit chat" },
 ];
 
 function chatCompleter(line: string): [string[], string] {
@@ -540,51 +540,93 @@ function chatCompleter(line: string): [string[], string] {
 }
 
 /**
- * Show inline ghost suggestion as user types / commands.
- * Renders dimmed text after cursor, erased on next keystroke.
+ * Show inline ghost + multi-line dropdown as user types / commands.
+ * Best match completion shown inline (dimmed) after cursor.
+ * All matches (max 5) shown as dropdown lines below the prompt.
+ * Uses only relative cursor movement — no absolute column needed.
  */
 function setupInlineSuggestions(rl: readline.Interface): void {
-  let hasGhost = false;
+  let dropdownLines = 0;  // extra lines rendered below prompt
+  let ghostLen = 0;        // length of inline ghost text on prompt line
 
   const clearGhost = () => {
-    if (hasGhost) {
-      // Restore cursor to where user was typing, clear everything after
-      process.stdout.write("\x1b[u\x1b[K");
-      hasGhost = false;
+    const buf: string[] = [];
+    // Clear dropdown lines below prompt
+    if (dropdownLines > 0) {
+      for (let i = 0; i < dropdownLines; i++) {
+        buf.push("\x1b[B\x1b[2K"); // down + clear entire line
+      }
+      buf.push(`\x1b[${dropdownLines}A`); // back up to prompt line
+      dropdownLines = 0;
     }
+    // Clear inline ghost: readline already repositioned cursor at end of
+    // typed text after processing the keypress, so just clear to EOL
+    buf.push("\x1b[K");
+    ghostLen = 0;
+    if (buf.length) process.stdout.write(buf.join(""));
   };
 
   const showGhost = () => {
     const line = (rl as any).line as string;
-    if (!line || !line.startsWith("/") || line.includes(" ")) {
-      return;
-    }
+    if (!line || !line.startsWith("/") || line.includes(" ")) return;
 
     const matches = CHAT_COMMANDS.filter((c) => c.cmd.startsWith(line));
     if (matches.length === 0) return;
 
-    const best = matches[0];
+    const shown = matches.slice(0, 5);
+    const best = shown[0];
     const remainder = best.cmd.slice(line.length);
-    if (!remainder && matches.length === 1) return;
+    if (!remainder && shown.length === 1) return;
 
-    const ghost = `${remainder} \u2014 ${best.desc}`;
+    const buf: string[] = [];
 
-    // Save cursor, write dimmed ghost, restore cursor
-    process.stdout.write("\x1b[s");       // save cursor position
-    process.stdout.write("\x1b[K");       // clear to end of line (remove old ghost)
-    process.stdout.write(`\x1b[2m${ghost}\x1b[0m`); // write dimmed ghost
-    process.stdout.write("\x1b[u");       // restore cursor to typing position
-    hasGhost = true;
+    // Inline ghost: cursor is already at end of typed text (readline did that)
+    // Just clear rest of line and write dimmed remainder
+    buf.push("\x1b[K");
+    if (remainder) {
+      buf.push(`\x1b[2m${remainder}\x1b[0m`);
+      ghostLen = remainder.length;
+      // Move cursor back to end of typed text
+      buf.push(`\x1b[${remainder.length}D`);
+    }
+
+    // Dropdown: show all matches below prompt
+    if (shown.length > 1 || (shown.length === 1 && remainder)) {
+      const count = shown.length;
+      // Make room by writing newlines (handles terminal bottom scroll)
+      for (let i = 0; i < count; i++) buf.push("\n");
+      buf.push(`\x1b[${count}A`); // back to prompt line
+
+      // Write each dropdown line: cyan command + dim description
+      for (let i = 0; i < count; i++) {
+        buf.push(`\x1b[B\r\x1b[2K`); // down + col 1 + clear
+        buf.push(`  \x1b[36m${shown[i].cmd.padEnd(14)}\x1b[0m\x1b[2m${shown[i].desc}\x1b[0m`);
+      }
+      dropdownLines = count;
+
+      // Back to prompt line and restore horizontal position
+      // Move up to prompt line
+      buf.push(`\x1b[${count}A`);
+      // Move to column 1, then rewrite prompt+line to position cursor correctly
+      buf.push(`\r`);
+      // Let readline handle cursor positioning
+    }
+
+    process.stdout.write(buf.join(""));
+    // After dropdown, force readline to redraw prompt line to fix cursor position
+    if (dropdownLines > 0) {
+      (rl as any)._refreshLine();
+      // Re-draw inline ghost since _refreshLine cleared it
+      if (remainder) {
+        process.stdout.write(`\x1b[K\x1b[2m${remainder}\x1b[0m\x1b[${remainder.length}D`);
+      }
+    }
   };
 
-  // Listen to keypresses
   process.stdin.on("keypress", (_ch: string, key: any) => {
     if (!key) return;
-    // Clear ghost first, then show updated one on next tick
     clearGhost();
-    if (key.name !== "return" && key.name !== "tab" && key.name !== "backspace") {
-      setImmediate(showGhost);
-    } else if (key.name === "backspace") {
+    if (key.name !== "return" && key.name !== "tab") {
       setImmediate(showGhost);
     }
   });
@@ -663,6 +705,7 @@ async function chat(explicitSession?: string): Promise<void> {
       ? `${dim(`[${current!.id}]`)} ${dim("...")} `
       : `${dim(`[${current!.id}]`)} ${bold(">")} `;
 
+    rl.setPrompt(prefix);
     rl.question(prefix, async (line) => {
       // Line continuation with backslash
       if (line.endsWith("\\")) {

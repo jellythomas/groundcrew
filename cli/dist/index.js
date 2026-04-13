@@ -398,7 +398,7 @@ var CHAT_COMMANDS = [
   { cmd: "/history", desc: "Show completed tasks" },
   { cmd: "/queue", desc: "Show pending tasks" },
   { cmd: "/clear", desc: "Clear pending tasks" },
-  { cmd: "/quit", desc: "Exit chat" }
+  { cmd: "/exit", desc: "Exit chat" }
 ];
 function chatCompleter(line) {
   if (!line.startsWith("/")) return [[], line];
@@ -415,36 +415,61 @@ function chatCompleter(line) {
   return [[], line];
 }
 function setupInlineSuggestions(rl) {
-  let hasGhost = false;
+  let dropdownLines = 0;
+  let ghostLen = 0;
   const clearGhost = () => {
-    if (hasGhost) {
-      process.stdout.write("\x1B[u\x1B[K");
-      hasGhost = false;
+    const buf = [];
+    if (dropdownLines > 0) {
+      for (let i = 0; i < dropdownLines; i++) {
+        buf.push("\x1B[B\x1B[2K");
+      }
+      buf.push(`\x1B[${dropdownLines}A`);
+      dropdownLines = 0;
     }
+    buf.push("\x1B[K");
+    ghostLen = 0;
+    if (buf.length) process.stdout.write(buf.join(""));
   };
   const showGhost = () => {
     const line = rl.line;
-    if (!line || !line.startsWith("/") || line.includes(" ")) {
-      return;
-    }
+    if (!line || !line.startsWith("/") || line.includes(" ")) return;
     const matches = CHAT_COMMANDS.filter((c) => c.cmd.startsWith(line));
     if (matches.length === 0) return;
-    const best = matches[0];
+    const shown = matches.slice(0, 5);
+    const best = shown[0];
     const remainder = best.cmd.slice(line.length);
-    if (!remainder && matches.length === 1) return;
-    const ghost = `${remainder} \u2014 ${best.desc}`;
-    process.stdout.write("\x1B[s");
-    process.stdout.write("\x1B[K");
-    process.stdout.write(`\x1B[2m${ghost}\x1B[0m`);
-    process.stdout.write("\x1B[u");
-    hasGhost = true;
+    if (!remainder && shown.length === 1) return;
+    const buf = [];
+    buf.push("\x1B[K");
+    if (remainder) {
+      buf.push(`\x1B[2m${remainder}\x1B[0m`);
+      ghostLen = remainder.length;
+      buf.push(`\x1B[${remainder.length}D`);
+    }
+    if (shown.length > 1 || shown.length === 1 && remainder) {
+      const count = shown.length;
+      for (let i = 0; i < count; i++) buf.push("\n");
+      buf.push(`\x1B[${count}A`);
+      for (let i = 0; i < count; i++) {
+        buf.push(`\x1B[B\r\x1B[2K`);
+        buf.push(`  \x1B[36m${shown[i].cmd.padEnd(14)}\x1B[0m\x1B[2m${shown[i].desc}\x1B[0m`);
+      }
+      dropdownLines = count;
+      buf.push(`\x1B[${count}A`);
+      buf.push(`\r`);
+    }
+    process.stdout.write(buf.join(""));
+    if (dropdownLines > 0) {
+      rl._refreshLine();
+      if (remainder) {
+        process.stdout.write(`\x1B[K\x1B[2m${remainder}\x1B[0m\x1B[${remainder.length}D`);
+      }
+    }
   };
   process.stdin.on("keypress", (_ch, key) => {
     if (!key) return;
     clearGhost();
-    if (key.name !== "return" && key.name !== "tab" && key.name !== "backspace") {
-      setImmediate(showGhost);
-    } else if (key.name === "backspace") {
+    if (key.name !== "return" && key.name !== "tab") {
       setImmediate(showGhost);
     }
   });
@@ -510,6 +535,7 @@ async function chat(explicitSession) {
   const prompt = () => {
     const isContinuation = continuationBuffer.length > 0;
     const prefix = isContinuation ? `${dim(`[${current.id}]`)} ${dim("...")} ` : `${dim(`[${current.id}]`)} ${bold(">")} `;
+    rl.setPrompt(prefix);
     rl.question(prefix, async (line) => {
       if (line.endsWith("\\")) {
         continuationBuffer.push(line.slice(0, -1));

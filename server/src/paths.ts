@@ -46,15 +46,22 @@ function generateSessionId(): string {
 }
 
 /**
- * Initialize a new session. Called once on MCP server startup.
- * Creates .groundcrew/sessions/<id>/ and registers in active-sessions.json.
+ * Resolve paths only. Called on MCP server startup.
+ * Does NOT create a session — that happens when `start` is called.
  */
-export async function initSession(): Promise<string> {
-  // Resolve project dir (waits for hook to write marker file)
+export async function initPaths(): Promise<void> {
   PROJECT_DIR = await resolveProjectDir();
   GROUNDCREW_DIR = path.join(PROJECT_DIR, ".groundcrew");
   SESSIONS_DIR = path.join(GROUNDCREW_DIR, "sessions");
   ACTIVE_SESSION_FILE = path.join(GROUNDCREW_DIR, "active-sessions.json");
+}
+
+/**
+ * Create a new session. Called when the `start` tool is invoked.
+ * Creates .groundcrew/sessions/<id>/ and registers in active-sessions.json.
+ */
+export async function createSession(): Promise<string> {
+  if (sessionId) return sessionId; // already created, reuse
 
   sessionId = generateSessionId();
   sessionDir = path.join(SESSIONS_DIR, sessionId);
@@ -88,12 +95,12 @@ export async function cleanupSession(): Promise<void> {
 }
 
 export function getSessionId(): string {
-  if (!sessionId) throw new Error("Session not initialized. Call initSession() first.");
+  if (!sessionId) throw new Error("No active session. Call the 'start' tool first to create a session.");
   return sessionId;
 }
 
 export function getSessionDir(): string {
-  if (!sessionDir) throw new Error("Session not initialized. Call initSession() first.");
+  if (!sessionDir) throw new Error("No active session. Call the 'start' tool first to create a session.");
   return sessionDir;
 }
 

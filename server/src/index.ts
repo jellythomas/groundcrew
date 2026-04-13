@@ -25,10 +25,12 @@ import {
   getStatus,
   updateSession,
 } from "./session.js";
-import { initSession, cleanupSession, getSessionId } from "./paths.js";
+import { initPaths, createSession, cleanupSession, getSessionId } from "./paths.js";
 
 // Config from environment
 const SESSION_TIMEOUT = parseInt(process.env.GROUNDCREW_SESSION_TIMEOUT || "5400000"); // 90 min default
+const POLL_WINDOW = 25000; // 25s — must be shorter than MCP client timeout (~60s)
+let sessionWaitMs = 0;     // cumulative time spent waiting for tasks
 const FEEDBACK_TIMEOUT = 30000; // 30s for mid-task feedback checks
 
 const GROUNDCREW_INSTRUCTIONS = `
@@ -204,10 +206,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
   switch (name) {
     case "get_task": {
-      // Always use server-configured timeout — never trust LLM-provided values
-      const task = await getNextTask(SESSION_TIMEOUT);
+      // Use short poll window to stay within MCP request timeout
+      const task = await getNextTask(POLL_WINDOW);
 
       if (task) {
+        sessionWaitMs = 0; // reset wait timer on task received
         cacheActiveTask(task);
         await updateSession({ status: "active", currentTask: task.id });
         const remaining = (await listPending()).length;
@@ -230,19 +233,41 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
-      // Timeout exhausted — end session and clean up
-      await endSession();
-      await cleanupSession();
+      // No task found in this poll window — check cumulative wait
+      sessionWaitMs += POLL_WINDOW;
+
+      if (sessionWaitMs >= SESSION_TIMEOUT) {
+        // Session timeout exhausted — end session and clean up
+        await endSession();
+        await cleanupSession();
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify({
+                status: "session_ended",
+                message:
+                  "Session timed out after " + Math.round(SESSION_TIMEOUT / 60000) + " minutes with no tasks. " +
+                  "Session ended and cleaned up. Tell the user: 'Groundcrew session ended — start a new session to continue.'",
+                next_action: "Stop. Session is over.",
+              }),
+            },
+          ],
+        };
+      }
+
+      // Still within session timeout — tell LLM to retry
+      await updateSession({ status: "parked" });
       return {
         content: [
           {
             type: "text" as const,
             text: JSON.stringify({
-              status: "session_ended",
-              message:
-                "Session timed out after " + Math.round(SESSION_TIMEOUT / 60000) + " minutes with no tasks. " +
-                "Session ended and cleaned up. Tell the user: 'Groundcrew session ended — start a new session to continue.'",
-              next_action: "Stop. Session is over.",
+              status: "queue_empty",
+              waited_ms: sessionWaitMs,
+              timeout_ms: SESSION_TIMEOUT,
+              message: "No tasks in queue. Waiting for user to add tasks.",
+              next_action: "Call get_task again to continue waiting.",
             }),
           },
         ],
@@ -407,7 +432,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
 
     case "start": {
-      const sid = getSessionId();
+      const sid = await createSession();
+      await initFeedbackFile();
       const initialTask = args?.initial_task as string | undefined;
       await updateSession({ status: "active" });
 
@@ -482,9 +508,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 // ── Start Server ──────────────────────────────────────────────────────────────
 
 async function main() {
-  const sid = await initSession();
-  await updateSession({ sessionId: sid, status: "active" });
-  await initFeedbackFile();
+  await initPaths();
 
   // Cleanup on exit
   const onExit = async () => { await cleanupSession(); process.exit(0); };
@@ -493,7 +517,7 @@ async function main() {
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error(`Groundcrew MCP server running — session: ${sid}`);
+  console.error("Groundcrew MCP server running — waiting for start command");
 }
 
 main().catch((err) => {
