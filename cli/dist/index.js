@@ -434,16 +434,24 @@ function setupInlineSuggestions(rl) {
       clearGhost();
       return;
     }
+    const promptLen = (rl._prompt || "").replace(/\x1b\[[0-9;]*m/g, "").length;
+    const cols = process.stdout.columns || 80;
+    const usedCols = promptLen + line.length;
+    const available = cols - usedCols - 1;
+    if (available <= 3) {
+      clearGhost();
+      return;
+    }
     const best = matches[0];
     const ghost = best.cmd.slice(line.length);
-    const hint = ghost + dim(` \u2014 ${best.desc}`);
-    const rawLen = ghost.length + ` \u2014 ${best.desc}`.length;
-    clearGhost();
-    if (ghost || matches.length > 0) {
-      process.stdout.write(`\x1B[2m${ghost} \u2014 ${best.desc}\x1B[0m`);
-      lastGhostLen = rawLen;
-      process.stdout.write("\x1B[" + rawLen + "D");
+    let fullGhost = `${ghost} \u2014 ${best.desc}`;
+    if (fullGhost.length > available) {
+      fullGhost = fullGhost.slice(0, available - 1) + "\u2026";
     }
+    clearGhost();
+    process.stdout.write(`\x1B[2m${fullGhost}\x1B[0m`);
+    lastGhostLen = fullGhost.length;
+    process.stdout.write("\x1B[" + lastGhostLen + "D");
   };
   process.stdin.on("keypress", (_ch, key) => {
     if (!key) return;

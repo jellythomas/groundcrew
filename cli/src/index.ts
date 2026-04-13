@@ -568,20 +568,30 @@ function setupInlineSuggestions(rl: readline.Interface): void {
       return;
     }
 
-    // Show best match as ghost
+    // Calculate available space to prevent line wrapping
+    const promptLen = ((rl as any)._prompt || "").replace(/\x1b\[[0-9;]*m/g, "").length;
+    const cols = process.stdout.columns || 80;
+    const usedCols = promptLen + line.length;
+    const available = cols - usedCols - 1; // -1 safety margin
+
+    if (available <= 3) {
+      clearGhost();
+      return;
+    }
+
     const best = matches[0];
     const ghost = best.cmd.slice(line.length);
-    const hint = ghost + dim(` — ${best.desc}`);
-    const rawLen = ghost.length + ` — ${best.desc}`.length;
+    let fullGhost = `${ghost} \u2014 ${best.desc}`;
+
+    // Truncate to fit
+    if (fullGhost.length > available) {
+      fullGhost = fullGhost.slice(0, available - 1) + "\u2026";
+    }
 
     clearGhost();
-    if (ghost || matches.length > 0) {
-      // Write dimmed ghost text
-      process.stdout.write(`\x1b[2m${ghost} — ${best.desc}\x1b[0m`);
-      // Move cursor back to where user is typing
-      lastGhostLen = rawLen;
-      process.stdout.write("\x1b[" + rawLen + "D");
-    }
+    process.stdout.write(`\x1b[2m${fullGhost}\x1b[0m`);
+    lastGhostLen = fullGhost.length;
+    process.stdout.write("\x1b[" + lastGhostLen + "D");
   };
 
   // Listen to keypresses
