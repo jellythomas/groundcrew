@@ -1,3 +1,12 @@
+---
+name: dispatch
+description: >
+  Groundcrew task decomposer. Breaks any request into queued groundcrew tasks
+  with auto-chained dependencies. Supports skill invocations (/skill-name args),
+  plain text tasks, and mixed pipelines. Use when: "dispatch", "queue tasks",
+  "break this into steps", or invoking /dispatch.
+---
+
 # Dispatch — Groundcrew Task Decomposer
 
 Breaks any request into groundcrew queue items with auto-chained dependencies. Does NO work itself.
