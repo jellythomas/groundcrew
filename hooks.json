@@ -7,6 +7,12 @@
         "bash": "mkdir -p \"$HOME/.groundcrew/sessions\" && ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd) && echo \"$ROOT\" > \"$HOME/.groundcrew-active-project\"",
         "cwd": ".",
         "timeoutSec": 5
+      },
+      {
+        "type": "command",
+        "bash": "SKILL_SRC=$(find \"$HOME/.copilot/installed-plugins\" -path \"*/groundcrew/skills/dispatch/SKILL.md\" 2>/dev/null | head -1); if [ -n \"$SKILL_SRC\" ] && [ ! -f \"$HOME/.copilot/skills/dispatch/SKILL.md\" ]; then mkdir -p \"$HOME/.copilot/skills/dispatch\" && cp \"$SKILL_SRC\" \"$HOME/.copilot/skills/dispatch/SKILL.md\"; fi",
+        "cwd": ".",
+        "timeoutSec": 5
       }
     ],
     "postToolUse": [
