@@ -1,7 +1,7 @@
 {
   "name": "groundcrew",
   "description": "Autonomous task queue and human-in-the-loop feedback for Copilot CLI. Queue tasks, batch work, reduce premium requests. Your ground crew keeps the copilot flying.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": {
     "name": "jellythomas"
   },
@@ -11,6 +11,14 @@
   "keywords": ["queue", "autonomous", "feedback", "human-in-the-loop", "task-management", "productivity"],
   "category": "productivity",
   "hooks": "hooks.json",
-  "mcpServers": ".mcp.json",
+  "mcpServers": {
+    "groundcrew": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/server/dist/index.js"],
+      "env": {
+        "GROUNDCREW_IDLE_TIMEOUT": "5400000"
+      }
+    }
+  },
   "skills": "./skills/"
 }
