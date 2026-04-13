@@ -426,8 +426,14 @@ function setupInlineSuggestions(rl) {
       buf.push(`\x1B[${dropdownLines}A`);
       dropdownLines = 0;
     }
-    buf.push("\x1B[K");
-    ghostLen = 0;
+    if (ghostLen > 0) {
+      buf.push("\x1B[s");
+      buf.push("\x1B[999C");
+      buf.push(`\x1B[${ghostLen}D`);
+      buf.push("\x1B[K");
+      buf.push("\x1B[u");
+      ghostLen = 0;
+    }
     if (buf.length) process.stdout.write(buf.join(""));
   };
   const showGhost = () => {
@@ -468,12 +474,6 @@ function setupInlineSuggestions(rl) {
   };
   process.stdin.on("keypress", (_ch, key) => {
     if (!key) return;
-    if (key.name === "return" && key.shift) {
-      const line = rl.line;
-      rl.line = line + "\\";
-      rl.cursor = rl.line.length;
-      return;
-    }
     clearGhost();
     if (key.name !== "return" && key.name !== "tab") {
       setImmediate(showGhost);
@@ -481,6 +481,58 @@ function setupInlineSuggestions(rl) {
   });
 }
 async function chat(explicitSession) {
+  process.stdout.write("\x1B[?2004h\x1B[>1u");
+  const originalStdinEmit = process.stdin.emit.bind(process.stdin);
+  let pasteBuffer = "";
+  let isPasting = false;
+  process.stdin.emit = function(event, ...args) {
+    if (event === "data") {
+      const data = args[0];
+      let str = typeof data === "string" ? data : data.toString();
+      const pasteStart = str.indexOf("\x1B[200~");
+      if (pasteStart !== -1) {
+        isPasting = true;
+        if (pasteStart > 0) {
+          originalStdinEmit(event, Buffer.from(str.slice(0, pasteStart)));
+        }
+        str = str.slice(pasteStart + 6);
+      }
+      if (isPasting) {
+        const pasteEnd = str.indexOf("\x1B[201~");
+        if (pasteEnd !== -1) {
+          pasteBuffer += str.slice(0, pasteEnd);
+          const afterPaste = str.slice(pasteEnd + 6);
+          isPasting = false;
+          const pasted = pasteBuffer.replace(/[\r\n]+$/, "");
+          pasteBuffer = "";
+          if (pasted.includes("\n") || pasted.includes("\r")) {
+            const lines = pasted.split(/\r?\n/);
+            for (let i = 0; i < lines.length - 1; i++) {
+              originalStdinEmit(event, Buffer.from(lines[i] + "\\\r"));
+            }
+            originalStdinEmit(event, Buffer.from(lines[lines.length - 1]));
+          } else {
+            originalStdinEmit(event, Buffer.from(pasted));
+          }
+          if (afterPaste) {
+            return originalStdinEmit(event, Buffer.from(afterPaste));
+          }
+          return false;
+        } else {
+          pasteBuffer += str;
+          return false;
+        }
+      }
+      if (str.includes("\x1B[13;2u")) {
+        const replaced = str.replace(/\x1b\[13;2u/g, "\\\r");
+        return originalStdinEmit(event, Buffer.from(replaced));
+      }
+      if (str === "\x1B\r" || str === "\x1B\n") {
+        return originalStdinEmit(event, Buffer.from("\\\r"));
+      }
+    }
+    return originalStdinEmit(event, ...args);
+  };
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
@@ -535,6 +587,7 @@ async function chat(explicitSession) {
   console.log();
   let continuationBuffer = [];
   rl.on("close", () => {
+    process.stdout.write("\x1B[?2004l\x1B[<u");
     console.log(dim("\nBye."));
     process.exit(0);
   });
