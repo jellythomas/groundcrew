@@ -29,7 +29,7 @@ import { initPaths, createSession, cleanupSession, getSessionId } from "./paths.
 
 // Config from environment (GROUNDCREW_SESSION_TIMEOUT is legacy alias for IDLE_TIMEOUT)
 const IDLE_TIMEOUT = parseInt(process.env.GROUNDCREW_IDLE_TIMEOUT || process.env.GROUNDCREW_SESSION_TIMEOUT || "5400000");  // 90 min idle before session ends
-const MAX_LIFETIME = parseInt(process.env.GROUNDCREW_MAX_LIFETIME || "14400000"); // 4 hour absolute max
+const MAX_LIFETIME = parseInt(process.env.GROUNDCREW_MAX_LIFETIME || "0"); // 0 = no lifetime limit (only idle timeout ends sessions)
 const FEEDBACK_TIMEOUT = 30000; // 30s for mid-task feedback checks
 
 // Session lifecycle tracking
@@ -38,7 +38,7 @@ let lastTaskAt = 0;        // Date.now() when last task was received/completed
 
 function sessionAge(): number { return sessionStartedAt ? Date.now() - sessionStartedAt : 0; }
 function idleTime(): number { return lastTaskAt ? Date.now() - lastTaskAt : 0; }
-function isOvertime(): boolean { return sessionAge() >= MAX_LIFETIME; }
+function isOvertime(): boolean { return MAX_LIFETIME > 0 && sessionAge() >= MAX_LIFETIME; }
 function overtimeWarning(): string | undefined {
   if (!isOvertime()) return undefined;
   const mins = Math.round(sessionAge() / 60000);
@@ -222,47 +222,44 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
   switch (name) {
     case "get_task": {
-      // Check queue immediately — no blocking, no slicing risk
-      const pending = await listPending();
+      // Block up to 30s waiting for a task (avoids nudge loop of rapid tool calls)
+      const POLL_TIMEOUT = 30000;
 
-      if (pending.length > 0) {
-        const task = await getNextTask(0); // instant, queue has items
-        if (task) {
-          lastTaskAt = Date.now();
-          cacheActiveTask(task);
-          await updateSession({ status: "active", currentTask: task.id });
-          const remaining = (await listPending()).length;
-          const warning = overtimeWarning();
-          return {
-            content: [
-              {
-                type: "text" as const,
-                text: JSON.stringify({
-                  status: "task_available",
-                  session_id: getSessionId(),
-                  task_id: task.id,
-                  task: task.task,
-                  source: task.source,
-                  priority: task.priority,
-                  queue_remaining: remaining,
-                  ...(warning ? { WARNING: warning } : {}),
-                  PROTOCOL: "You are in the Groundcrew autonomous task loop. Execute this task fully. Use get_feedback between major steps. When done, call mark_done with summary AND full output. After mark_done, you MUST call get_task again — NEVER stop the loop.",
-                }),
-              },
-            ],
-          };
-        }
+      // Try blocking wait for task — file watcher + poll inside getNextTask
+      const task = await getNextTask(POLL_TIMEOUT);
+
+      if (task) {
+        lastTaskAt = Date.now();
+        cacheActiveTask(task);
+        await updateSession({ status: "active", currentTask: task.id });
+        const remaining = (await listPending()).length;
+        const warning = overtimeWarning();
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify({
+                status: "task_available",
+                session_id: getSessionId(),
+                task_id: task.id,
+                task: task.task,
+                source: task.source,
+                priority: task.priority,
+                queue_remaining: remaining,
+                ...(warning ? { WARNING: warning } : {}),
+                PROTOCOL: "You are in the Groundcrew autonomous task loop. Execute this task fully. Use get_feedback between major steps. When done, call mark_done with summary AND full output. After mark_done, you MUST call get_task again — NEVER stop the loop.",
+              }),
+            },
+          ],
+        };
       }
 
-      // Queue empty — check if session should end
+      // Queue empty after blocking — check if session should end
       const idle = idleTime();
       const age = sessionAge();
 
-      // End session if: idle timeout exceeded, OR overtime + queue empty
-      if (idle >= IDLE_TIMEOUT || (isOvertime() && pending.length === 0)) {
-        const reason = idle >= IDLE_TIMEOUT
-          ? `Idle for ${Math.round(idle / 60000)} min (limit: ${Math.round(IDLE_TIMEOUT / 60000)} min)`
-          : `Session exceeded ${Math.round(MAX_LIFETIME / 60000)} min lifetime and queue is empty`;
+      if (idle >= IDLE_TIMEOUT) {
+        const reason = `Idle for ${Math.round(idle / 60000)} min (limit: ${Math.round(IDLE_TIMEOUT / 60000)} min)`;
         await endSession();
         await cleanupSession();
         return {

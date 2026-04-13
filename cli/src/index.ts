@@ -699,17 +699,33 @@ function readMultilineInput(sessionId: string, projectName: string, gitCtx: { br
 
       // Position cursor at (crow, ccol)
       const lastRow = lines.length - 1;
-      // Position cursor at (crow, ccol) — move up past remaining input lines + suggestions
-      const rowsUp = (lastRow - crow) + suggestionRows;
-      if (rowsUp > 0) buf.push(`\x1b[${rowsUp}A`);
+
+      // Calculate actual terminal rows each line occupies (for wrapped lines)
+      const termRowsForLine = (i: number): number => {
+        const lineLen = (i === 0 ? padWidth : padWidth) + lines[i].length;
+        return lineLen === 0 ? 1 : Math.max(1, Math.ceil(lineLen / termW));
+      };
+
+      // Move up from the end of the last drawn line to the cursor position
+      // Count terminal rows below cursor line (remaining input lines + suggestions)
+      let rowsBelowCursor = suggestionRows;
+      for (let i = lastRow; i > crow; i--) rowsBelowCursor += termRowsForLine(i);
+      // Add any extra wrapped rows on the cursor line itself (below the cursor's row within wraps)
+      const cursorLineTermRows = termRowsForLine(crow);
+      const cursorRowWithinLine = Math.floor((padWidth + ccol) / termW);
+      rowsBelowCursor += (cursorLineTermRows - 1 - cursorRowWithinLine);
+
+      if (rowsBelowCursor > 0) buf.push(`\x1b[${rowsBelowCursor}A`);
 
       buf.push("\r");
-      const col = padWidth + ccol;
+      const col = (padWidth + ccol) % termW;
       if (col > 0) buf.push(`\x1b[${col}C`);
 
-      // lastTermRow = rows above cursor (separator + input lines above crow)
-      // Suggestion rows below cursor are cleared by \x1b[J on next render
-      lastTermRow = 1 + crow;
+      // lastTermRow = terminal rows above cursor (separator + wrapped input lines above crow + cursor's wrapped rows above)
+      let rowsAbove = 1; // separator line
+      for (let i = 0; i < crow; i++) rowsAbove += termRowsForLine(i);
+      rowsAbove += cursorRowWithinLine;
+      lastTermRow = rowsAbove;
       process.stdout.write(buf.join(""));
     };
 

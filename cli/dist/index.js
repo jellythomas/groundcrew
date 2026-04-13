@@ -539,12 +539,23 @@ function readMultilineInput(sessionId, projectName, gitCtx, sessionDir) {
         }
       }
       const lastRow = lines.length - 1;
-      const rowsUp = lastRow - crow + suggestionRows;
-      if (rowsUp > 0) buf.push(`\x1B[${rowsUp}A`);
+      const termRowsForLine = (i) => {
+        const lineLen = (i === 0 ? padWidth : padWidth) + lines[i].length;
+        return lineLen === 0 ? 1 : Math.max(1, Math.ceil(lineLen / termW));
+      };
+      let rowsBelowCursor = suggestionRows;
+      for (let i = lastRow; i > crow; i--) rowsBelowCursor += termRowsForLine(i);
+      const cursorLineTermRows = termRowsForLine(crow);
+      const cursorRowWithinLine = Math.floor((padWidth + ccol) / termW);
+      rowsBelowCursor += cursorLineTermRows - 1 - cursorRowWithinLine;
+      if (rowsBelowCursor > 0) buf.push(`\x1B[${rowsBelowCursor}A`);
       buf.push("\r");
-      const col = padWidth + ccol;
+      const col = (padWidth + ccol) % termW;
       if (col > 0) buf.push(`\x1B[${col}C`);
-      lastTermRow = 1 + crow;
+      let rowsAbove = 1;
+      for (let i = 0; i < crow; i++) rowsAbove += termRowsForLine(i);
+      rowsAbove += cursorRowWithinLine;
+      lastTermRow = rowsAbove;
       process.stdout.write(buf.join(""));
     };
     const finish = (result) => {
