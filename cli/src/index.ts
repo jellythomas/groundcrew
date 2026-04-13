@@ -784,14 +784,33 @@ function readMultilineInput(sessionId: string, projectName: string, gitCtx: { br
         if (str.startsWith("\x1b[F", i)) { ccol = lines[crow].length; render(); i += 3; continue; }
 
         // CSI u (Kitty keyboard protocol) — decode \x1b[{codepoint};{modifier}u
+        // Also handles single-param \x1b[{codepoint}u (unmodified key)
         // modifier bit 3 (value 4) = Ctrl, sent as bits+1 so modifier 5 = Ctrl
         if (str[i] === "\x1b" && i + 1 < str.length && str[i + 1] === "[") {
-          const csiMatch = str.slice(i).match(/^\x1b\[(\d+);(\d+)u/);
+          const csiMatch = str.slice(i).match(/^\x1b\[(\d+)(?:;(\d+))?u/);
           if (csiMatch) {
             const codepoint = parseInt(csiMatch[1], 10);
-            const modifier = parseInt(csiMatch[2], 10);
+            const modifier = csiMatch[2] ? parseInt(csiMatch[2], 10) : 1;
             const isCtrl = (modifier - 1) & 4;
             const seqLen = csiMatch[0].length;
+
+            // Handle unmodified functional keys encoded as CSI u
+            if (!isCtrl && modifier <= 1) {
+              switch (codepoint) {
+                case 9: // Tab (unmodified)
+                  // Delegate to Tab handler by injecting \t
+                  str = str.slice(0, i) + "\t" + str.slice(i + seqLen);
+                  continue;
+                case 13: // Enter (unmodified)
+                  str = str.slice(0, i) + "\r" + str.slice(i + seqLen);
+                  continue;
+                case 27: // Escape (unmodified)
+                  i += seqLen; continue;
+                case 127: // Backspace (unmodified)
+                  str = str.slice(0, i) + "\x7f" + str.slice(i + seqLen);
+                  continue;
+              }
+            }
 
             if (isCtrl) {
               switch (codepoint) {

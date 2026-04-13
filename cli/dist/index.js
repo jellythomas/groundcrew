@@ -638,12 +638,28 @@ function readMultilineInput(sessionId, projectName, gitCtx) {
           continue;
         }
         if (str[i] === "\x1B" && i + 1 < str.length && str[i + 1] === "[") {
-          const csiMatch = str.slice(i).match(/^\x1b\[(\d+);(\d+)u/);
+          const csiMatch = str.slice(i).match(/^\x1b\[(\d+)(?:;(\d+))?u/);
           if (csiMatch) {
             const codepoint = parseInt(csiMatch[1], 10);
-            const modifier = parseInt(csiMatch[2], 10);
+            const modifier = csiMatch[2] ? parseInt(csiMatch[2], 10) : 1;
             const isCtrl = modifier - 1 & 4;
             const seqLen = csiMatch[0].length;
+            if (!isCtrl && modifier <= 1) {
+              switch (codepoint) {
+                case 9:
+                  str = str.slice(0, i) + "	" + str.slice(i + seqLen);
+                  continue;
+                case 13:
+                  str = str.slice(0, i) + "\r" + str.slice(i + seqLen);
+                  continue;
+                case 27:
+                  i += seqLen;
+                  continue;
+                case 127:
+                  str = str.slice(0, i) + "\x7F" + str.slice(i + seqLen);
+                  continue;
+              }
+            }
             if (isCtrl) {
               switch (codepoint) {
                 case 99:
