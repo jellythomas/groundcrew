@@ -175,10 +175,6 @@ var cyan = (t) => color(36, t);
 var dim = (t) => color(2, t);
 var bold = (t) => color(1, t);
 var red = (t) => color(31, t);
-async function init() {
-  await fs.mkdir(SESSIONS_DIR, { recursive: true });
-  console.log(green("Groundcrew initialized.") + ` ${dim(GROUNDCREW_HOME + "/ ready")}`);
-}
 async function add(taskText, priority, sessionDir) {
   const queue = await readQueue(sessionDir);
   const task = {
@@ -1114,7 +1110,6 @@ ${bold("groundcrew")} \u2014 CLI companion for the Groundcrew Copilot plugin
 ${bold("Usage:")}
   groundcrew chat                              Interactive chat mode (recommended)
   groundcrew chat --session <id>               Chat with a specific session
-  groundcrew init                              Initialize ~/.groundcrew/ (centralized)
   groundcrew add <task>                        Add a task to the queue
   groundcrew add --priority <task>             Add an urgent task (processed first)
   groundcrew add --session <id> <task>         Add to a specific session
@@ -1159,9 +1154,6 @@ async function main() {
   const { value: explicitSession, remaining: args } = extractFlag(rawArgs, "--session");
   const command = args[0];
   switch (command) {
-    case "init":
-      await init();
-      return;
     case "chat":
       await chat(explicitSession);
       return;
