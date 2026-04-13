@@ -29,36 +29,51 @@ async function resolveProjectDir(): Promise<string> {
   return process.cwd();
 }
 
-// Resolved lazily in initSession()
+// ── Centralized storage at ~/.groundcrew ─────────────────────────────────────
+
+const GROUNDCREW_HOME = path.join(os.homedir(), ".groundcrew");
+const SESSIONS_DIR = path.join(GROUNDCREW_HOME, "sessions");
+const ACTIVE_SESSION_FILE = path.join(GROUNDCREW_HOME, "active-sessions.json");
+const HISTORY_FILE = path.join(GROUNDCREW_HOME, "history.json");
+
 let PROJECT_DIR = "";
-let GROUNDCREW_DIR = "";
-let SESSIONS_DIR = "";
-let ACTIVE_SESSION_FILE = "";
+let repoName = "";
 
 let sessionId: string | null = null;
 let sessionDir: string | null = null;
 
 /**
- * Generate a short unique session ID.
+ * Derive a short repo slug from the project directory.
+ * /Users/mekari/projects/mekari_credit → "mekari_credit"
  */
-function generateSessionId(): string {
-  return crypto.randomBytes(4).toString("hex"); // e.g. "a1b2c3d4"
+function deriveRepoName(projectDir: string): string {
+  return path.basename(projectDir).replace(/[^a-zA-Z0-9_-]/g, "_") || "unknown";
 }
 
 /**
- * Resolve paths only. Called on MCP server startup.
+ * Generate a repo-prefixed session ID.
+ * e.g. "mekari_credit-a1b2c3d4"
+ */
+function generateSessionId(): string {
+  const hex = crypto.randomBytes(4).toString("hex");
+  return `${repoName}-${hex}`;
+}
+
+/**
+ * Resolve paths on MCP server startup.
  * Does NOT create a session — that happens when `start` is called.
  */
 export async function initPaths(): Promise<void> {
   PROJECT_DIR = await resolveProjectDir();
-  GROUNDCREW_DIR = path.join(PROJECT_DIR, ".groundcrew");
-  SESSIONS_DIR = path.join(GROUNDCREW_DIR, "sessions");
-  ACTIVE_SESSION_FILE = path.join(GROUNDCREW_DIR, "active-sessions.json");
+  repoName = deriveRepoName(PROJECT_DIR);
+
+  // Ensure centralized dirs exist
+  await fs.mkdir(SESSIONS_DIR, { recursive: true });
 }
 
 /**
  * Create a new session. Called when the `start` tool is invoked.
- * Creates .groundcrew/sessions/<id>/ and registers in active-sessions.json.
+ * Creates ~/.groundcrew/sessions/<repo>-<hex>/ and registers in active-sessions.json.
  */
 export async function createSession(): Promise<string> {
   if (sessionId) return sessionId; // already created, reuse
@@ -74,6 +89,7 @@ export async function createSession(): Promise<string> {
     started: new Date().toISOString(),
     pid: process.pid,
     cwd: PROJECT_DIR,
+    repo: repoName,
   };
   await fs.writeFile(ACTIVE_SESSION_FILE, JSON.stringify(activeSessions, null, 2));
 
@@ -121,21 +137,30 @@ export function getStatusFile(): string {
 }
 
 export function getGroundcrewDir(): string {
-  return GROUNDCREW_DIR;
+  return GROUNDCREW_HOME;
 }
 
 export function getHistoryFile(): string {
-  return path.join(GROUNDCREW_DIR, "history.json");
+  return HISTORY_FILE;
 }
 
 export function getActiveSessionsFile(): string {
   return ACTIVE_SESSION_FILE;
 }
 
-interface ActiveSessionEntry {
+export function getRepoName(): string {
+  return repoName;
+}
+
+export function getProjectDir(): string {
+  return PROJECT_DIR;
+}
+
+export interface ActiveSessionEntry {
   started: string;
   pid: number;
   cwd: string;
+  repo: string;
 }
 
 export async function readActiveSessions(): Promise<Record<string, ActiveSessionEntry>> {

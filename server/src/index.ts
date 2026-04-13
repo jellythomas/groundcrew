@@ -15,6 +15,7 @@ import {
   listPending,
   listCompleted,
   cacheActiveTask,
+  type BlockingOptions,
 } from "./queue.js";
 import { getFeedback, initFeedbackFile } from "./feedback.js";
 import {
@@ -66,13 +67,17 @@ Once started, follow this cycle:
 DISPLAY RESULTS: After each mark_done, BRIEFLY display the task result to the user (1-3 sentences).
 This is important — the user should see progress, not just silent cycling.
 
+BLOCKING: get_task blocks until a task arrives or the session times out (90 min idle).
+You only need to call it ONCE — it will wait silently. Do NOT retry or loop on get_task.
+When it returns, you either have a task (execute it) or session_ended (stop).
+
 Never break the loop unless:
-- get_task returns queue_empty with retries exhausted (session parks automatically)
+- get_task returns session_ended (idle timeout reached)
 - The user explicitly says "stop" or "exit groundcrew"
 
 ### RESUME PROTOCOL
 When the user says "continue" or "resume" after a parked session:
-- Call get_task to re-enter the loop
+- Call get_task to re-enter the loop (it will block until a task arrives)
 `.trim();
 
 const server = new Server(
@@ -90,10 +95,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: "get_task",
       description:
-        "Get the next task from the Groundcrew queue. Blocks until a task is available or session times out. " +
-        "The timeout is configured server-side (default 90 min) — do NOT pass timeout_ms. " +
-        "PROTOCOL: This is the core of the Groundcrew loop. After you finish executing a task " +
-        "and call mark_done, you MUST call get_task again to continue. " +
+        "Get the next task from the Groundcrew queue. BLOCKS silently until a task arrives or session times out (90 min idle). " +
+        "Do NOT retry — one call is enough. The server sends heartbeats to keep the connection alive. " +
+        "Returns either a task (execute it) or session_ended (stop). " +
+        "PROTOCOL: After mark_done, call get_task ONCE — it will block and wait. " +
         "Never stop the loop unless get_task returns session_ended, or the user says 'stop'. " +
         "Between major steps of a task, call get_feedback to check for user corrections.",
       inputSchema: {
@@ -223,9 +228,29 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     case "get_task": {
       // Block for the full idle timeout — no nudge loop needed.
       // Like TaskSync: the tool call stays "pending" until a task arrives or session ends.
+      // Progress heartbeats every 30s keep the MCP client from timing out.
       await updateSession({ status: "parked" });
 
-      const task = await getNextTask(IDLE_TIMEOUT);
+      const progressToken = request.params._meta?.progressToken;
+      let heartbeatCount = 0;
+
+      const task = await getNextTask({
+        timeoutMs: IDLE_TIMEOUT,
+        onHeartbeat: progressToken
+          ? () => {
+              heartbeatCount++;
+              server.notification({
+                method: "notifications/progress",
+                params: {
+                  progressToken,
+                  progress: heartbeatCount,
+                  total: 0,  // indeterminate — just a keepalive
+                  message: "Standby — waiting for tasks…",
+                },
+              }).catch(() => {});  // best-effort, don't break on send failure
+            }
+          : undefined,
+      });
 
       if (task) {
         lastTaskAt = Date.now();
@@ -246,7 +271,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 priority: task.priority,
                 queue_remaining: remaining,
                 ...(warning ? { WARNING: warning } : {}),
-                PROTOCOL: "You are in the Groundcrew autonomous task loop. Execute this task fully. Use get_feedback between major steps. When done, call mark_done with summary AND full output. After mark_done, you MUST call get_task again — NEVER stop the loop.",
+                PROTOCOL: "Execute task → get_feedback between steps → mark_done → get_task (blocks for next).",
               }),
             },
           ],
@@ -336,11 +361,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               message: pending.length > 0
                 ? `Task completed. ${pending.length} task(s) remaining in queue.`
                 : "Task completed. Queue empty — get_task will check for new tasks.",
-              CRITICAL_NEXT_ACTION:
-                "You are in the Groundcrew autonomous task loop. " +
-                "You MUST call the get_task tool RIGHT NOW as your next action. " +
-                "Do NOT stop. Do NOT summarize. " +
-                "Call get_task IMMEDIATELY. The loop continues until get_task returns session_ended.",
+              NEXT: "Call get_task once — it blocks until the next task arrives. No retry needed.",
               DISPLAY_TO_USER: summary,
             }),
           },

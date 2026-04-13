@@ -1,6 +1,7 @@
 import fs from "fs/promises";
 import { existsSync } from "fs";
 import path from "path";
+import os from "os";
 import readline from "readline";
 import { execFile, execFileSync } from "child_process";
 import { promisify } from "util";
@@ -68,17 +69,16 @@ close access fp`], { timeout: 3000, stdio: ["pipe", "pipe", "pipe"] });
   } catch { return null; }
 }
 
-// Resolved at startup by resolveRoot() — git-aware project root discovery
-let GROUNDCREW_DIR = ".groundcrew";
-let SESSIONS_DIR = path.join(GROUNDCREW_DIR, "sessions");
-let ACTIVE_SESSIONS_FILE = path.join(GROUNDCREW_DIR, "active-sessions.json");
-let HISTORY_FILE = path.join(GROUNDCREW_DIR, "history.json");
+// ── Centralized storage at ~/.groundcrew ─────────────────────────────────────
+const GROUNDCREW_HOME = path.join(os.homedir(), ".groundcrew");
+const SESSIONS_DIR = path.join(GROUNDCREW_HOME, "sessions");
+const ACTIVE_SESSIONS_FILE = path.join(GROUNDCREW_HOME, "active-sessions.json");
+const HISTORY_FILE = path.join(GROUNDCREW_HOME, "history.json");
+
+let REPO_NAME = "";
 
 /**
- * Resolve the project root that contains .groundcrew/.
- * Uses git rev-parse --show-toplevel for worktree support, then walks up
- * from CWD as fallback. This ensures the CLI works from subdirectories
- * and git worktrees.
+ * Derive repo name from CWD (git-aware for worktree/subdirectory support).
  */
 async function resolveRoot(): Promise<void> {
   let root: string | null = null;
@@ -86,31 +86,16 @@ async function resolveRoot(): Promise<void> {
   // 1. Try git rev-parse --show-toplevel (worktree-aware)
   try {
     const { stdout } = await execFileAsync("git", ["rev-parse", "--show-toplevel"]);
-    const gitRoot = stdout.trim();
-    if (gitRoot && existsSync(path.join(gitRoot, ".groundcrew"))) {
-      root = gitRoot;
-    }
+    root = stdout.trim() || null;
   } catch { /* not a git repo or git not installed */ }
 
-  // 2. Walk up from CWD looking for .groundcrew/
-  if (!root) {
-    let dir = process.cwd();
-    while (dir !== path.dirname(dir)) {
-      if (existsSync(path.join(dir, ".groundcrew"))) {
-        root = dir;
-        break;
-      }
-      dir = path.dirname(dir);
-    }
-  }
-
-  // 3. Fallback to CWD (for `groundcrew init`)
+  // 2. Fallback to CWD
   if (!root) root = process.cwd();
 
-  GROUNDCREW_DIR = path.join(root, ".groundcrew");
-  SESSIONS_DIR = path.join(GROUNDCREW_DIR, "sessions");
-  ACTIVE_SESSIONS_FILE = path.join(GROUNDCREW_DIR, "active-sessions.json");
-  HISTORY_FILE = path.join(GROUNDCREW_DIR, "history.json");
+  REPO_NAME = path.basename(root).replace(/[^a-zA-Z0-9_-]/g, "_") || "unknown";
+
+  // Ensure centralized dirs exist
+  await fs.mkdir(SESSIONS_DIR, { recursive: true });
 }
 
 interface Task {
@@ -148,8 +133,16 @@ async function readActiveSessions(): Promise<Record<string, ActiveSessionEntry>>
 }
 
 /**
+ * Filter session IDs that belong to the current repo.
+ * Session IDs are prefixed with repo name: "mekari_credit-a1b2c3d4"
+ */
+function isRepoSession(sessionId: string): boolean {
+  return sessionId.startsWith(REPO_NAME + "-");
+}
+
+/**
  * Resolve which session to target.
- * Priority: --session flag > single active session > error if ambiguous.
+ * Priority: --session flag > single active repo session > error if ambiguous.
  */
 async function resolveSessionDir(explicitSession?: string): Promise<string> {
   if (explicitSession) {
@@ -161,12 +154,13 @@ async function resolveSessionDir(explicitSession?: string): Promise<string> {
   }
 
   const sessions = await readActiveSessions();
-  const ids = Object.keys(sessions);
+  // Filter to sessions for THIS repo
+  const ids = Object.keys(sessions).filter(isRepoSession);
 
   if (ids.length === 0) {
-    // Fallback: check if any session dirs exist (server may have exited without cleanup)
+    // Fallback: check session dirs on disk for this repo
     try {
-      const dirs = await fs.readdir(SESSIONS_DIR);
+      const dirs = (await fs.readdir(SESSIONS_DIR)).filter(isRepoSession);
       if (dirs.length === 1) return path.join(SESSIONS_DIR, dirs[0]);
       if (dirs.length > 1) {
         // Pick most recently modified
@@ -182,7 +176,7 @@ async function resolveSessionDir(explicitSession?: string): Promise<string> {
         return path.join(SESSIONS_DIR, latest.dir);
       }
     } catch { /* no sessions dir */ }
-    throw new Error("No active sessions. Start Copilot with groundcrew first.");
+    throw new Error(`No active sessions for repo "${REPO_NAME}". Start Copilot with groundcrew first.`);
   }
 
   if (ids.length === 1) {
@@ -246,7 +240,7 @@ const red = (t: string) => color(31, t);
 
 async function init(): Promise<void> {
   await fs.mkdir(SESSIONS_DIR, { recursive: true });
-  console.log(green("Groundcrew initialized.") + ` ${dim(GROUNDCREW_DIR + "/ created")}`);
+  console.log(green("Groundcrew initialized.") + ` ${dim(GROUNDCREW_HOME + "/ ready")}`);
 }
 
 async function add(taskText: string, priority: number, sessionDir: string): Promise<void> {
@@ -397,27 +391,43 @@ async function sessions(): Promise<void> {
     return;
   }
 
+  // Group by repo prefix
+  const byRepo = new Map<string, string[]>();
+  for (const dir of allDirs) {
+    const dashIdx = dir.lastIndexOf("-");
+    const repo = dashIdx > 0 ? dir.substring(0, dashIdx) : "unknown";
+    if (!byRepo.has(repo)) byRepo.set(repo, []);
+    byRepo.get(repo)!.push(dir);
+  }
+
   console.log(bold("Sessions:\n"));
 
-  for (const dir of allDirs) {
-    const isActive = ids.includes(dir);
-    const sessionDir = path.join(SESSIONS_DIR, dir);
+  for (const [repo, dirs] of byRepo) {
+    const isCurrent = repo === REPO_NAME;
+    console.log(`  ${isCurrent ? green(repo) : dim(repo)}`);
 
-    let info = "";
-    try {
-      const session = JSON.parse(await fs.readFile(path.join(sessionDir, "session.json"), "utf-8"));
-      const startTime = new Date(session.started).getTime();
-      const minutes = Math.round((Date.now() - startTime) / 60000);
-      const statusColor = session.status === "active" ? green : session.status === "parked" ? yellow : dim;
-      info = `${statusColor(session.status)} | ${minutes}min | ${session.tasksCompleted || 0} tasks done`;
-    } catch {
-      info = dim("no session data");
+    for (const dir of dirs) {
+      const isActive = ids.includes(dir);
+      const sessionDir = path.join(SESSIONS_DIR, dir);
+
+      let info = "";
+      try {
+        const session = JSON.parse(await fs.readFile(path.join(sessionDir, "session.json"), "utf-8"));
+        const startTime = new Date(session.started).getTime();
+        const minutes = Math.round((Date.now() - startTime) / 60000);
+        const statusColor = session.status === "active" ? green : session.status === "parked" ? yellow : dim;
+        info = `${statusColor(session.status)} | ${minutes}min | ${session.tasksCompleted || 0} tasks done`;
+      } catch {
+        info = dim("no session data");
+      }
+
+      const queue = await readQueue(sessionDir);
+      const marker = isActive ? green("*") : " ";
+      // Show only the hex suffix for cleaner display
+      const shortId = dir.substring(repo.length + 1);
+
+      console.log(`    ${marker} ${cyan(shortId)}  ${info} | ${queue.tasks.length} queued`);
     }
-
-    const queue = await readQueue(sessionDir);
-    const marker = isActive ? green("*") : " ";
-
-    console.log(`  ${marker} ${cyan(dir)}  ${info} | ${queue.tasks.length} queued`);
   }
 
   if (ids.length > 0) {
@@ -484,13 +494,14 @@ async function destroyOne(sessionId: string): Promise<void> {
 
 async function stopAll(): Promise<void> {
   const active = await readActiveSessions();
-  const ids = Object.keys(active);
+  // Scope to current repo
+  const ids = Object.keys(active).filter(isRepoSession);
 
   let allDirs: string[] = [];
-  try { allDirs = await fs.readdir(SESSIONS_DIR); } catch {}
+  try { allDirs = (await fs.readdir(SESSIONS_DIR)).filter(isRepoSession); } catch {}
 
   if (ids.length === 0 && allDirs.length === 0) {
-    console.log(dim("No sessions to stop."));
+    console.log(dim(`No sessions to stop for repo "${REPO_NAME}".`));
     return;
   }
 
@@ -511,33 +522,29 @@ async function stopAll(): Promise<void> {
     }
   }
 
-  // Clear active sessions file
-  await fs.writeFile(ACTIVE_SESSIONS_FILE, "{}");
-  console.log(green("\nAll sessions stopped."));
+  // Remove stopped sessions from active-sessions.json (keep other repos)
+  const remaining = await readActiveSessions();
+  for (const id of ids) delete remaining[id];
+  await fs.writeFile(ACTIVE_SESSIONS_FILE, JSON.stringify(remaining, null, 2));
+  console.log(green(`\nAll ${REPO_NAME} sessions stopped.`));
 }
 
 async function destroyAll(): Promise<void> {
-  // Stop everything first
+  // Stop this repo's sessions first
   await stopAll();
 
-  // Delete all session directories
+  // Delete this repo's session directories only
   try {
-    const dirs = await fs.readdir(SESSIONS_DIR);
+    const dirs = (await fs.readdir(SESSIONS_DIR)).filter(isRepoSession);
     for (const dir of dirs) {
       await fs.rm(path.join(SESSIONS_DIR, dir), { recursive: true, force: true });
     }
   } catch { /* no sessions dir */ }
 
-  // Delete history
-  try { await fs.unlink(HISTORY_FILE); } catch {}
-
-  // Delete active sessions file
-  try { await fs.unlink(ACTIVE_SESSIONS_FILE); } catch {}
-
   // Delete tool history
-  try { await fs.unlink(path.join(GROUNDCREW_DIR, "tool-history.csv")); } catch {}
+  try { await fs.unlink(path.join(GROUNDCREW_HOME, "tool-history.csv")); } catch {}
 
-  console.log(green("All session data and history deleted."));
+  console.log(green(`All ${REPO_NAME} session data deleted.`));
 }
 
 // ── Chat Mode ────────────────────────────────────────────────────────────────
@@ -557,6 +564,9 @@ async function listSessionChoices(): Promise<SessionChoice[]> {
   const choices: SessionChoice[] = [];
 
   for (const [id, entry] of Object.entries(active)) {
+    // Only show sessions for the current repo
+    if (!isRepoSession(id)) continue;
+
     const dir = path.join(SESSIONS_DIR, id);
     let status = "active";
     let minutes = 0;
@@ -585,7 +595,7 @@ async function pickSession(rl: readline.Interface): Promise<SessionChoice | null
   const choices = await listSessionChoices();
 
   if (choices.length === 0) {
-    console.log(red("No active sessions. Start Copilot with groundcrew first."));
+    console.log(red(`No active sessions for repo "${REPO_NAME}". Start Copilot with groundcrew first.`));
     return null;
   }
 
@@ -1241,7 +1251,7 @@ ${bold("groundcrew")} — CLI companion for the Groundcrew Copilot plugin
 ${bold("Usage:")}
   groundcrew chat                              Interactive chat mode (recommended)
   groundcrew chat --session <id>               Chat with a specific session
-  groundcrew init                              Initialize .groundcrew/ in current dir
+  groundcrew init                              Initialize ~/.groundcrew/ (centralized)
   groundcrew add <task>                        Add a task to the queue
   groundcrew add --priority <task>             Add an urgent task (processed first)
   groundcrew add --session <id> <task>         Add to a specific session
@@ -1252,9 +1262,9 @@ ${bold("Usage:")}
   groundcrew sessions                          List all sessions
   groundcrew history                           Show completed tasks
   groundcrew clear                             Clear all pending tasks
-  groundcrew stop                              Stop all active sessions
+  groundcrew stop                              Stop all sessions for current repo
   groundcrew stop --session <id>               Stop a specific session
-  groundcrew destroy                           Delete all sessions, history, and data
+  groundcrew destroy                           Delete all sessions for current repo
   groundcrew destroy --session <id>            Delete a specific session
 
 ${bold("Session targeting:")}
