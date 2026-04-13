@@ -41,15 +41,20 @@ Once started, follow this cycle:
   get_task → execute task → get_feedback (between major steps) → mark_done → get_task
 
 DISPLAY RESULTS: After each mark_done, BRIEFLY display the task result to the user (1-3 sentences).
-This is important — the user should see progress, not just silent cycling.
 
 BLOCKING: get_task blocks until a task arrives or the session times out (90 min idle).
-You only need to call it ONCE — it will wait silently. Do NOT retry or loop on get_task.
-When it returns, you either have a task (execute it) or session_ended (stop).
+Call it ONCE — it waits silently. Do NOT retry. Returns a task or session_ended.
 
-Never break the loop unless:
-- get_task returns session_ended (idle timeout reached)
-- The user explicitly says "stop" or "exit groundcrew"
+### EXECUTING TASKS
+Tasks come in two forms:
+
+**Skill tasks (start with /):** e.g. "/planning-task MC-1234 parent:develop"
+→ Parse skill name and args
+→ Call the Skill tool: skill: "planning-task", args: "MC-1234 parent:develop"
+→ Follow ALL loaded instructions, spawn ALL referenced subagents
+
+**Plain text tasks:** e.g. "refactor the auth middleware"
+→ Execute directly using your own judgment
 
 ### RESUME PROTOCOL
 When the user says "continue" or "resume" after a parked session:
