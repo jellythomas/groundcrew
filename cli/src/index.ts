@@ -2,10 +2,39 @@ import fs from "fs/promises";
 import { existsSync } from "fs";
 import path from "path";
 import readline from "readline";
-import { execFile } from "child_process";
+import { execFile, execFileSync } from "child_process";
 import { promisify } from "util";
 
 const execFileAsync = promisify(execFile);
+
+// Git context for separator line (cached, refreshed periodically)
+function getGitContext(): { branch: string; dirty: string } | null {
+  try {
+    const branch = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
+      encoding: "utf8", timeout: 500, stdio: ["pipe", "pipe", "pipe"],
+    }).trim();
+    // Status indicators matching Copilot CLI: * unstaged, + staged, % untracked
+    let dirty = "";
+    try {
+      const status = execFileSync("git", ["status", "--porcelain", "-uno"], {
+        encoding: "utf8", timeout: 500, stdio: ["pipe", "pipe", "pipe"],
+      }).trim();
+      if (status) {
+        const hasStaged = status.split("\n").some(l => l[0] !== " " && l[0] !== "?");
+        const hasUnstaged = status.split("\n").some(l => l[1] === "M" || l[1] === "D");
+        if (hasStaged) dirty += "+";
+        if (hasUnstaged) dirty += "*";
+      }
+      const untracked = execFileSync("git", ["ls-files", "--others", "--exclude-standard"], {
+        encoding: "utf8", timeout: 500, stdio: ["pipe", "pipe", "pipe"],
+      }).trim();
+      if (untracked) dirty += "%";
+    } catch { /* ignore status errors */ }
+    return { branch, dirty };
+  } catch {
+    return null;
+  }
+}
 
 // Resolved at startup by resolveRoot() — git-aware project root discovery
 let GROUNDCREW_DIR = ".groundcrew";
@@ -578,7 +607,7 @@ const CHAT_COMMANDS: Array<{ cmd: string; desc: string }> = [
  * Tab: slash command completion
  * Paste: bracketed paste with multiline support
  */
-function readMultilineInput(sessionId: string): Promise<string | null> {
+function readMultilineInput(sessionId: string, projectName: string, gitCtx: { branch: string; dirty: string } | null): Promise<string | null> {
   return new Promise((resolve) => {
     const lines: string[] = [""];
     let crow = 0;  // cursor row in lines[]
@@ -601,9 +630,15 @@ function readMultilineInput(sessionId: string): Promise<string | null> {
       if (lastTermRow > 0) buf.push(`\x1b[${lastTermRow}A`);
       buf.push("\r\x1b[J"); // col 0 + clear to end of screen
 
-      // Separator line: ─── sessionId ─────────
+      // Separator line: ─── sessionId  projectName git:(branch*) ───
       const termW = process.stdout.columns || 80;
-      const info = ` ${sessionId} `;
+      let info = ` ${sessionId} `;
+      const ctxParts: string[] = [];
+      if (projectName) ctxParts.push(projectName);
+      if (gitCtx) {
+        ctxParts.push(`git:(${gitCtx.branch}${gitCtx.dirty})`);
+      }
+      if (ctxParts.length) info += ` ${ctxParts.join(" ")} `;
       const dashRight = "─".repeat(Math.max(0, termW - 4 - info.length));
       buf.push(dim("───" + info + dashRight));
 
@@ -748,8 +783,63 @@ function readMultilineInput(sessionId: string): Promise<string | null> {
         // End (\x1b[F)
         if (str.startsWith("\x1b[F", i)) { ccol = lines[crow].length; render(); i += 3; continue; }
 
-        // Skip unknown CSI sequences
+        // CSI u (Kitty keyboard protocol) — decode \x1b[{codepoint};{modifier}u
+        // modifier bit 3 (value 4) = Ctrl, sent as bits+1 so modifier 5 = Ctrl
         if (str[i] === "\x1b" && i + 1 < str.length && str[i + 1] === "[") {
+          const csiMatch = str.slice(i).match(/^\x1b\[(\d+);(\d+)u/);
+          if (csiMatch) {
+            const codepoint = parseInt(csiMatch[1], 10);
+            const modifier = parseInt(csiMatch[2], 10);
+            const isCtrl = (modifier - 1) & 4;
+            const seqLen = csiMatch[0].length;
+
+            if (isCtrl) {
+              switch (codepoint) {
+                case 99: // Ctrl+C
+                  if (fullText() || lines.length > 1 || lines[0].length > 0) {
+                    const lastRow = lines.length - 1;
+                    const rowsDown = lastRow - crow;
+                    if (rowsDown > 0) process.stdout.write(`\x1b[${rowsDown}B`);
+                    process.stdout.write("\r\n");
+                    lines.length = 0; lines.push("");
+                    crow = 0; ccol = 0; lastTermRow = 0;
+                    render();
+                  } else {
+                    process.stdout.write("\r\n");
+                    finish(null); return;
+                  }
+                  i += seqLen; continue;
+                case 100: // Ctrl+D
+                  if (fullText()) { doDelete(); } else { process.stdout.write("\n"); finish(null); return; }
+                  i += seqLen; continue;
+                case 97:  // Ctrl+A — home
+                  ccol = 0; render(); i += seqLen; continue;
+                case 101: // Ctrl+E — end
+                  ccol = lines[crow].length; render(); i += seqLen; continue;
+                case 117: // Ctrl+U — clear before cursor
+                  lines[crow] = lines[crow].slice(ccol); ccol = 0; render(); i += seqLen; continue;
+                case 107: // Ctrl+K — clear after cursor
+                  lines[crow] = lines[crow].slice(0, ccol); render(); i += seqLen; continue;
+                case 119: // Ctrl+W — delete word before cursor
+                  { const before = lines[crow].slice(0, ccol);
+                    const stripped = before.replace(/\s+$/, "");
+                    const sp = stripped.lastIndexOf(" ");
+                    const newBefore = sp >= 0 ? stripped.slice(0, sp + 1) : "";
+                    lines[crow] = newBefore + lines[crow].slice(ccol);
+                    ccol = newBefore.length; render(); }
+                  i += seqLen; continue;
+                case 108: // Ctrl+L — clear screen
+                  process.stdout.write("\x1b[2J\x1b[H");
+                  lastTermRow = 0; render();
+                  i += seqLen; continue;
+                default: break;
+              }
+            }
+            // Unhandled CSI u — skip it
+            i += seqLen; continue;
+          }
+
+          // Skip unknown CSI sequences (non-u final byte)
           let j = i + 2;
           while (j < str.length && str.charCodeAt(j) >= 0x30 && str.charCodeAt(j) <= 0x3f) j++;
           if (j < str.length) j++; // skip final byte
@@ -803,6 +893,11 @@ function readMultilineInput(sessionId: string): Promise<string | null> {
           const newBefore = sp >= 0 ? stripped.slice(0, sp + 1) : "";
           lines[crow] = newBefore + lines[crow].slice(ccol);
           ccol = newBefore.length; render(); i++; continue;
+        }
+        // Ctrl+L — clear screen (legacy byte)
+        if (str[i] === "\x0c") {
+          process.stdout.write("\x1b[2J\x1b[H");
+          lastTermRow = 0; render(); i++; continue;
         }
 
         // Ctrl+J (LF, 0x0A) — newline (cross-terminal)
@@ -963,7 +1058,9 @@ async function chat(explicitSession?: string): Promise<void> {
 
   // ── Main chat loop ─────────────────────────────────────────────────────────────────
   while (true) {
-    const text = await readMultilineInput(current.id);
+    // Refresh git context each turn (branch may change between prompts)
+    const gitCtx = getGitContext();
+    const text = await readMultilineInput(current.id, projectName, gitCtx);
 
     if (text === null) exitChat();
     if (!text) continue;

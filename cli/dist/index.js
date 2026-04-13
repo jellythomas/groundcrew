@@ -5,9 +5,42 @@ import fs from "fs/promises";
 import { existsSync } from "fs";
 import path from "path";
 import readline from "readline";
-import { execFile } from "child_process";
+import { execFile, execFileSync } from "child_process";
 import { promisify } from "util";
 var execFileAsync = promisify(execFile);
+function getGitContext() {
+  try {
+    const branch = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
+      encoding: "utf8",
+      timeout: 500,
+      stdio: ["pipe", "pipe", "pipe"]
+    }).trim();
+    let dirty = "";
+    try {
+      const status2 = execFileSync("git", ["status", "--porcelain", "-uno"], {
+        encoding: "utf8",
+        timeout: 500,
+        stdio: ["pipe", "pipe", "pipe"]
+      }).trim();
+      if (status2) {
+        const hasStaged = status2.split("\n").some((l) => l[0] !== " " && l[0] !== "?");
+        const hasUnstaged = status2.split("\n").some((l) => l[1] === "M" || l[1] === "D");
+        if (hasStaged) dirty += "+";
+        if (hasUnstaged) dirty += "*";
+      }
+      const untracked = execFileSync("git", ["ls-files", "--others", "--exclude-standard"], {
+        encoding: "utf8",
+        timeout: 500,
+        stdio: ["pipe", "pipe", "pipe"]
+      }).trim();
+      if (untracked) dirty += "%";
+    } catch {
+    }
+    return { branch, dirty };
+  } catch {
+    return null;
+  }
+}
 var GROUNDCREW_DIR = ".groundcrew";
 var SESSIONS_DIR = path.join(GROUNDCREW_DIR, "sessions");
 var ACTIVE_SESSIONS_FILE = path.join(GROUNDCREW_DIR, "active-sessions.json");
@@ -429,7 +462,7 @@ var CHAT_COMMANDS = [
   { cmd: "/clear", desc: "Clear pending tasks" },
   { cmd: "/exit", desc: "Exit chat" }
 ];
-function readMultilineInput(sessionId) {
+function readMultilineInput(sessionId, projectName, gitCtx) {
   return new Promise((resolve) => {
     const lines = [""];
     let crow = 0;
@@ -444,7 +477,13 @@ function readMultilineInput(sessionId) {
       if (lastTermRow > 0) buf.push(`\x1B[${lastTermRow}A`);
       buf.push("\r\x1B[J");
       const termW = process.stdout.columns || 80;
-      const info = ` ${sessionId} `;
+      let info = ` ${sessionId} `;
+      const ctxParts = [];
+      if (projectName) ctxParts.push(projectName);
+      if (gitCtx) {
+        ctxParts.push(`git:(${gitCtx.branch}${gitCtx.dirty})`);
+      }
+      if (ctxParts.length) info += ` ${ctxParts.join(" ")} `;
       const dashRight = "\u2500".repeat(Math.max(0, termW - 4 - info.length));
       buf.push(dim("\u2500\u2500\u2500" + info + dashRight));
       for (let i = 0; i < lines.length; i++) {
@@ -599,6 +638,89 @@ function readMultilineInput(sessionId) {
           continue;
         }
         if (str[i] === "\x1B" && i + 1 < str.length && str[i + 1] === "[") {
+          const csiMatch = str.slice(i).match(/^\x1b\[(\d+);(\d+)u/);
+          if (csiMatch) {
+            const codepoint = parseInt(csiMatch[1], 10);
+            const modifier = parseInt(csiMatch[2], 10);
+            const isCtrl = modifier - 1 & 4;
+            const seqLen = csiMatch[0].length;
+            if (isCtrl) {
+              switch (codepoint) {
+                case 99:
+                  if (fullText() || lines.length > 1 || lines[0].length > 0) {
+                    const lastRow = lines.length - 1;
+                    const rowsDown = lastRow - crow;
+                    if (rowsDown > 0) process.stdout.write(`\x1B[${rowsDown}B`);
+                    process.stdout.write("\r\n");
+                    lines.length = 0;
+                    lines.push("");
+                    crow = 0;
+                    ccol = 0;
+                    lastTermRow = 0;
+                    render();
+                  } else {
+                    process.stdout.write("\r\n");
+                    finish(null);
+                    return;
+                  }
+                  i += seqLen;
+                  continue;
+                case 100:
+                  if (fullText()) {
+                    doDelete();
+                  } else {
+                    process.stdout.write("\n");
+                    finish(null);
+                    return;
+                  }
+                  i += seqLen;
+                  continue;
+                case 97:
+                  ccol = 0;
+                  render();
+                  i += seqLen;
+                  continue;
+                case 101:
+                  ccol = lines[crow].length;
+                  render();
+                  i += seqLen;
+                  continue;
+                case 117:
+                  lines[crow] = lines[crow].slice(ccol);
+                  ccol = 0;
+                  render();
+                  i += seqLen;
+                  continue;
+                case 107:
+                  lines[crow] = lines[crow].slice(0, ccol);
+                  render();
+                  i += seqLen;
+                  continue;
+                case 119:
+                  {
+                    const before = lines[crow].slice(0, ccol);
+                    const stripped = before.replace(/\s+$/, "");
+                    const sp = stripped.lastIndexOf(" ");
+                    const newBefore = sp >= 0 ? stripped.slice(0, sp + 1) : "";
+                    lines[crow] = newBefore + lines[crow].slice(ccol);
+                    ccol = newBefore.length;
+                    render();
+                  }
+                  i += seqLen;
+                  continue;
+                case 108:
+                  process.stdout.write("\x1B[2J\x1B[H");
+                  lastTermRow = 0;
+                  render();
+                  i += seqLen;
+                  continue;
+                default:
+                  break;
+              }
+            }
+            i += seqLen;
+            continue;
+          }
           let j = i + 2;
           while (j < str.length && str.charCodeAt(j) >= 48 && str.charCodeAt(j) <= 63) j++;
           if (j < str.length) j++;
@@ -673,6 +795,13 @@ function readMultilineInput(sessionId) {
           const newBefore = sp >= 0 ? stripped.slice(0, sp + 1) : "";
           lines[crow] = newBefore + lines[crow].slice(ccol);
           ccol = newBefore.length;
+          render();
+          i++;
+          continue;
+        }
+        if (str[i] === "\f") {
+          process.stdout.write("\x1B[2J\x1B[H");
+          lastTermRow = 0;
           render();
           i++;
           continue;
@@ -819,7 +948,8 @@ async function chat(explicitSession) {
     process.exit(0);
   };
   while (true) {
-    const text = await readMultilineInput(current.id);
+    const gitCtx = getGitContext();
+    const text = await readMultilineInput(current.id, projectName, gitCtx);
     if (text === null) exitChat();
     if (!text) continue;
     const trimmed = text.trim();
