@@ -216,18 +216,22 @@ groundcrew history
 Sessions are centralized at `~/.groundcrew/` and prefixed with the repo name:
 
 ```bash
-# From mekari_credit repo → session: mekari_credit-a1b2c3d4
-# From groundcrew repo    → session: groundcrew-e5f6g7h8
+# From mekari_credit repo (or any of its worktrees) → session: mekari_credit-a1b2c3d4
+# From groundcrew repo → session: groundcrew-e5f6g7h8
 ```
 
-The CLI auto-filters to the current repo. `groundcrew chat` from `mekari_credit/` only sees `mekari_credit-*` sessions.
+Worktrees resolve to the main repo — `mekari_credit/.worktrees/worktree-mc-9292` and `mekari_credit/` both produce `mekari_credit-*` sessions.
 
 ### Session Management
 
 ```bash
-groundcrew sessions                          # List all sessions (grouped by repo)
+groundcrew sessions                          # List ALL sessions (all repos, grouped)
+groundcrew sessions --repo mekari_credit     # Filter by repo
+groundcrew sessions --status active          # Filter by status (active/parked/ended)
+groundcrew sessions --repo myapp --status active  # Combine filters
 groundcrew stop                              # Stop current repo's sessions
 groundcrew stop --session myproject-a1b2c3d4 # Stop a specific session
+groundcrew stop --session a1b2c3d4           # Short hex suffix also works
 groundcrew destroy                           # Delete current repo's session data
 ```
 
@@ -273,7 +277,9 @@ groundcrew history
 | `groundcrew feedback <message>` | Send feedback to the agent mid-task |
 | `groundcrew queue` | List pending tasks |
 | `groundcrew status` | Show session status and last update |
-| `groundcrew sessions` | List all sessions (grouped by repo) |
+| `groundcrew sessions` | List all sessions (all repos, grouped) |
+| `groundcrew sessions --repo <name>` | Filter sessions by repo name |
+| `groundcrew sessions --status <s>` | Filter by status (active/parked/ended) |
 | `groundcrew history` | Show completed tasks (persists across sessions) |
 | `groundcrew clear` | Clear all pending tasks |
 | `groundcrew stop` | Stop current repo's sessions |
