@@ -443,8 +443,12 @@ function readMultilineInput(sessionId) {
       const buf = [];
       if (lastTermRow > 0) buf.push(`\x1B[${lastTermRow}A`);
       buf.push("\r\x1B[J");
+      const termW = process.stdout.columns || 80;
+      const info = ` ${sessionId} `;
+      const dashRight = "\u2500".repeat(Math.max(0, termW - 4 - info.length));
+      buf.push(dim("\u2500\u2500\u2500" + info + dashRight));
       for (let i = 0; i < lines.length; i++) {
-        if (i > 0) buf.push("\n");
+        buf.push("\n");
         if (i === 0) {
           buf.push(dim(`[${sessionId}]`) + " " + bold(">") + " " + lines[i]);
         } else {
@@ -457,7 +461,7 @@ function readMultilineInput(sessionId) {
       buf.push("\r");
       const col = padWidth + ccol;
       if (col > 0) buf.push(`\x1B[${col}C`);
-      lastTermRow = crow;
+      lastTermRow = 1 + crow;
       process.stdout.write(buf.join(""));
     };
     const finish = (result) => {
@@ -606,11 +610,12 @@ function readMultilineInput(sessionId) {
           continue;
         }
         if (str[i] === "") {
-          if (fullText()) {
+          const hasText = fullText();
+          if (hasText || lines.length > 1 || lines[0].length > 0) {
             const lastRow = lines.length - 1;
             const rowsDown = lastRow - crow;
             if (rowsDown > 0) process.stdout.write(`\x1B[${rowsDown}B`);
-            process.stdout.write("\n");
+            process.stdout.write("\r\n");
             lines.length = 0;
             lines.push("");
             crow = 0;
@@ -618,7 +623,7 @@ function readMultilineInput(sessionId) {
             lastTermRow = 0;
             render();
           } else {
-            process.stdout.write("\n");
+            process.stdout.write("\r\n");
             finish(null);
             return;
           }
@@ -687,8 +692,10 @@ function readMultilineInput(sessionId) {
           continue;
         }
         if (str[i] === "	") {
-          if (lines.length === 1 && lines[0].startsWith("/")) {
-            const matches = CHAT_COMMANDS.filter((c) => c.cmd.startsWith(lines[0]));
+          const currentLine = lines[crow];
+          if (lines.length === 1 && currentLine.startsWith("/")) {
+            const partial = currentLine.split(" ")[0];
+            const matches = CHAT_COMMANDS.filter((c) => c.cmd.startsWith(partial));
             if (matches.length === 1) {
               lines[0] = matches[0].cmd + " ";
               ccol = lines[0].length;
@@ -697,7 +704,7 @@ function readMultilineInput(sessionId) {
               const lastRow = lines.length - 1;
               const rowsDown = lastRow - crow;
               if (rowsDown > 0) process.stdout.write(`\x1B[${rowsDown}B`);
-              process.stdout.write("\n");
+              process.stdout.write("\r\n");
               for (const m of matches) {
                 process.stdout.write(`  ${cyan(m.cmd.padEnd(14))} ${dim(m.desc)}
 `);

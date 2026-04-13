@@ -587,7 +587,7 @@ function readMultilineInput(sessionId: string): Promise<string | null> {
     // Visible width of prompt: "[sessionId] > "
     const padWidth = sessionId.length + 5; // [ + id + ] + space + > + space = len+5
 
-    // Track which terminal row the cursor was on after last render
+    // Track how many rows up from cursor to top of rendered area (including separator)
     let lastTermRow = 0;
     let pasteBuffer = "";
     let isPasting = false;
@@ -597,13 +597,19 @@ function readMultilineInput(sessionId: string): Promise<string | null> {
     const render = () => {
       const buf: string[] = [];
 
-      // Move to start of input area
+      // Move to start of input area (includes separator line)
       if (lastTermRow > 0) buf.push(`\x1b[${lastTermRow}A`);
       buf.push("\r\x1b[J"); // col 0 + clear to end of screen
 
-      // Draw each line
+      // Separator line: ─── sessionId ─────────
+      const termW = process.stdout.columns || 80;
+      const info = ` ${sessionId} `;
+      const dashRight = "─".repeat(Math.max(0, termW - 4 - info.length));
+      buf.push(dim("───" + info + dashRight));
+
+      // Draw each input line (below separator)
       for (let i = 0; i < lines.length; i++) {
-        if (i > 0) buf.push("\n");
+        buf.push("\n");
         if (i === 0) {
           buf.push(dim(`[${sessionId}]`) + " " + bold(">") + " " + lines[i]);
         } else {
@@ -620,7 +626,9 @@ function readMultilineInput(sessionId: string): Promise<string | null> {
       const col = padWidth + ccol;
       if (col > 0) buf.push(`\x1b[${col}C`);
 
-      lastTermRow = crow;
+      // lastTermRow = rows from cursor back to top of separator
+      // separator is 1 row, then crow rows of input below it
+      lastTermRow = 1 + crow;
       process.stdout.write(buf.join(""));
     };
 
@@ -752,17 +760,18 @@ function readMultilineInput(sessionId: string): Promise<string | null> {
 
         // Ctrl+C — clear input or exit
         if (str[i] === "\x03") {
-          if (fullText()) {
-            // Move past current rendering, start fresh below
+          const hasText = fullText();
+          if (hasText || lines.length > 1 || lines[0].length > 0) {
+            // Move past current rendering to below last line, start fresh
             const lastRow = lines.length - 1;
             const rowsDown = lastRow - crow;
             if (rowsDown > 0) process.stdout.write(`\x1b[${rowsDown}B`);
-            process.stdout.write("\n");
+            process.stdout.write("\r\n");
             lines.length = 0; lines.push("");
             crow = 0; ccol = 0; lastTermRow = 0;
             render();
           } else {
-            process.stdout.write("\n");
+            process.stdout.write("\r\n");
             finish(null); return;
           }
           i++; continue;
@@ -807,8 +816,10 @@ function readMultilineInput(sessionId: string): Promise<string | null> {
 
         // Tab — slash command completion
         if (str[i] === "\t") {
-          if (lines.length === 1 && lines[0].startsWith("/")) {
-            const matches = CHAT_COMMANDS.filter(c => c.cmd.startsWith(lines[0]));
+          const currentLine = lines[crow];
+          if (lines.length === 1 && currentLine.startsWith("/")) {
+            const partial = currentLine.split(" ")[0]; // only match command part
+            const matches = CHAT_COMMANDS.filter(c => c.cmd.startsWith(partial));
             if (matches.length === 1) {
               lines[0] = matches[0].cmd + " ";
               ccol = lines[0].length; render();
@@ -817,7 +828,7 @@ function readMultilineInput(sessionId: string): Promise<string | null> {
               const lastRow = lines.length - 1;
               const rowsDown = lastRow - crow;
               if (rowsDown > 0) process.stdout.write(`\x1b[${rowsDown}B`);
-              process.stdout.write("\n");
+              process.stdout.write("\r\n");
               for (const m of matches) {
                 process.stdout.write(`  ${cyan(m.cmd.padEnd(14))} ${dim(m.desc)}\n`);
               }

@@ -14255,8 +14255,8 @@ async function getStatus() {
 }
 
 // src/index.ts
-var IDLE_TIMEOUT = parseInt(process.env.GROUNDCREW_IDLE_TIMEOUT || "1800000");
-var MAX_LIFETIME = parseInt(process.env.GROUNDCREW_MAX_LIFETIME || "7200000");
+var IDLE_TIMEOUT = parseInt(process.env.GROUNDCREW_IDLE_TIMEOUT || process.env.GROUNDCREW_SESSION_TIMEOUT || "5400000");
+var MAX_LIFETIME = parseInt(process.env.GROUNDCREW_MAX_LIFETIME || "14400000");
 var FEEDBACK_TIMEOUT = 3e4;
 var sessionStartedAt = 0;
 var lastTaskAt = 0;
@@ -14272,7 +14272,7 @@ function isOvertime() {
 function overtimeWarning() {
   if (!isOvertime()) return void 0;
   const mins = Math.round(sessionAge() / 6e4);
-  return `\u26A0 Session has been running for ${mins} min (exceeds ${Math.round(MAX_LIFETIME / 6e4)} min limit). Session will end when queue empties. Wrap up or add final tasks.`;
+  return `\u26A0 Session has been running for ${mins} min (exceeds ${Math.round(MAX_LIFETIME / 6e4)} min limit). Continue processing remaining tasks. Session ends only when idle timeout is reached.`;
 }
 var GROUNDCREW_INSTRUCTIONS = `
 ## Groundcrew \u2014 Autonomous Task Queue for Claude Code
@@ -14556,6 +14556,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           isError: true
         };
       }
+      lastTaskAt = Date.now();
       const { session, warning } = await reportStatus(taskId, message, progress);
       return {
         content: [

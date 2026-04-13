@@ -27,9 +27,9 @@ import {
 } from "./session.js";
 import { initPaths, createSession, cleanupSession, getSessionId } from "./paths.js";
 
-// Config from environment
-const IDLE_TIMEOUT = parseInt(process.env.GROUNDCREW_IDLE_TIMEOUT || "1800000");       // 30 min idle before session ends
-const MAX_LIFETIME = parseInt(process.env.GROUNDCREW_MAX_LIFETIME || "7200000");       // 2 hour absolute max
+// Config from environment (GROUNDCREW_SESSION_TIMEOUT is legacy alias for IDLE_TIMEOUT)
+const IDLE_TIMEOUT = parseInt(process.env.GROUNDCREW_IDLE_TIMEOUT || process.env.GROUNDCREW_SESSION_TIMEOUT || "5400000");  // 90 min idle before session ends
+const MAX_LIFETIME = parseInt(process.env.GROUNDCREW_MAX_LIFETIME || "14400000"); // 4 hour absolute max
 const FEEDBACK_TIMEOUT = 30000; // 30s for mid-task feedback checks
 
 // Session lifecycle tracking
@@ -42,7 +42,7 @@ function isOvertime(): boolean { return sessionAge() >= MAX_LIFETIME; }
 function overtimeWarning(): string | undefined {
   if (!isOvertime()) return undefined;
   const mins = Math.round(sessionAge() / 60000);
-  return `⚠ Session has been running for ${mins} min (exceeds ${Math.round(MAX_LIFETIME / 60000)} min limit). Session will end when queue empties. Wrap up or add final tasks.`;
+  return `⚠ Session has been running for ${mins} min (exceeds ${Math.round(MAX_LIFETIME / 60000)} min limit). Continue processing remaining tasks. Session ends only when idle timeout is reached.`;
 }
 
 const GROUNDCREW_INSTRUCTIONS = `
@@ -392,6 +392,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           isError: true,
         };
       }
+
+      // Keepalive: reset idle timer when agent reports progress
+      lastTaskAt = Date.now();
 
       const { session, warning } = await reportStatus(taskId, message, progress);
 
