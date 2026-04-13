@@ -688,14 +688,20 @@ function readMultilineInput(sessionId: string, projectName: string, gitCtx: { br
 
     const submit = () => {
       const text = fullText();
-      // Move cursor to end of input for clean output
-      const lastRow = lines.length - 1;
-      const rowsDown = lastRow - crow;
+      // Erase the separator + input area, then re-draw only the prompt (no separator in history)
       const buf: string[] = [];
-      if (rowsDown > 0) buf.push(`\x1b[${rowsDown}B`);
-      buf.push("\r");
-      const endCol = padWidth + lines[lastRow].length;
-      if (endCol > 0) buf.push(`\x1b[${endCol}C`);
+      if (lastTermRow > 0) buf.push(`\x1b[${lastTermRow}A`);
+      buf.push("\r\x1b[J"); // clear from separator line down
+
+      // Re-draw only the input lines (no separator)
+      for (let i = 0; i < lines.length; i++) {
+        if (i > 0) buf.push("\n");
+        if (i === 0) {
+          buf.push(dim(`[${sessionId}]`) + " " + bold(">") + " " + lines[i]);
+        } else {
+          buf.push(" ".repeat(padWidth) + lines[i]);
+        }
+      }
       buf.push("\n");
       process.stdout.write(buf.join(""));
       lastTermRow = 0;
@@ -830,12 +836,9 @@ function readMultilineInput(sessionId: string, projectName: string, gitCtx: { br
               switch (codepoint) {
                 case 99: // Ctrl+C
                   if (fullText() || lines.length > 1 || lines[0].length > 0) {
-                    const lastRow = lines.length - 1;
-                    const rowsDown = lastRow - crow;
-                    if (rowsDown > 0) process.stdout.write(`\x1b[${rowsDown}B`);
-                    process.stdout.write("\r\n");
+                    // Clear input in-place (no scrollback residue)
                     lines.length = 0; lines.push("");
-                    crow = 0; ccol = 0; lastTermRow = 0;
+                    crow = 0; ccol = 0;
                     render();
                   } else {
                     process.stdout.write("\r\n");
@@ -883,15 +886,10 @@ function readMultilineInput(sessionId: string, projectName: string, gitCtx: { br
 
         // Ctrl+C — clear input or exit
         if (str[i] === "\x03") {
-          const hasText = fullText();
-          if (hasText || lines.length > 1 || lines[0].length > 0) {
-            // Move past current rendering to below last line, start fresh
-            const lastRow = lines.length - 1;
-            const rowsDown = lastRow - crow;
-            if (rowsDown > 0) process.stdout.write(`\x1b[${rowsDown}B`);
-            process.stdout.write("\r\n");
+          if (fullText() || lines.length > 1 || lines[0].length > 0) {
+            // Clear input in-place (no scrollback residue)
             lines.length = 0; lines.push("");
-            crow = 0; ccol = 0; lastTermRow = 0;
+            crow = 0; ccol = 0;
             render();
           } else {
             process.stdout.write("\r\n");

@@ -521,13 +521,17 @@ function readMultilineInput(sessionId, projectName, gitCtx) {
     };
     const submit = () => {
       const text = fullText();
-      const lastRow = lines.length - 1;
-      const rowsDown = lastRow - crow;
       const buf = [];
-      if (rowsDown > 0) buf.push(`\x1B[${rowsDown}B`);
-      buf.push("\r");
-      const endCol = padWidth + lines[lastRow].length;
-      if (endCol > 0) buf.push(`\x1B[${endCol}C`);
+      if (lastTermRow > 0) buf.push(`\x1B[${lastTermRow}A`);
+      buf.push("\r\x1B[J");
+      for (let i = 0; i < lines.length; i++) {
+        if (i > 0) buf.push("\n");
+        if (i === 0) {
+          buf.push(dim(`[${sessionId}]`) + " " + bold(">") + " " + lines[i]);
+        } else {
+          buf.push(" ".repeat(padWidth) + lines[i]);
+        }
+      }
       buf.push("\n");
       process.stdout.write(buf.join(""));
       lastTermRow = 0;
@@ -676,15 +680,10 @@ function readMultilineInput(sessionId, projectName, gitCtx) {
               switch (codepoint) {
                 case 99:
                   if (fullText() || lines.length > 1 || lines[0].length > 0) {
-                    const lastRow = lines.length - 1;
-                    const rowsDown = lastRow - crow;
-                    if (rowsDown > 0) process.stdout.write(`\x1B[${rowsDown}B`);
-                    process.stdout.write("\r\n");
                     lines.length = 0;
                     lines.push("");
                     crow = 0;
                     ccol = 0;
-                    lastTermRow = 0;
                     render();
                   } else {
                     process.stdout.write("\r\n");
@@ -760,17 +759,11 @@ function readMultilineInput(sessionId, projectName, gitCtx) {
           continue;
         }
         if (str[i] === "") {
-          const hasText = fullText();
-          if (hasText || lines.length > 1 || lines[0].length > 0) {
-            const lastRow = lines.length - 1;
-            const rowsDown = lastRow - crow;
-            if (rowsDown > 0) process.stdout.write(`\x1B[${rowsDown}B`);
-            process.stdout.write("\r\n");
+          if (fullText() || lines.length > 1 || lines[0].length > 0) {
             lines.length = 0;
             lines.push("");
             crow = 0;
             ccol = 0;
-            lastTermRow = 0;
             render();
           } else {
             process.stdout.write("\r\n");
