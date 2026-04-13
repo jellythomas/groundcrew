@@ -14292,6 +14292,9 @@ you must FIRST call start, THEN process the rest of the request as the first tas
 Once started, follow this cycle:
   get_task \u2192 execute task \u2192 get_feedback (between major steps) \u2192 mark_done \u2192 get_task
 
+DISPLAY RESULTS: After each mark_done, BRIEFLY display the task result to the user (1-3 sentences).
+This is important \u2014 the user should see progress, not just silent cycling.
+
 Never break the loop unless:
 - get_task returns queue_empty with retries exhausted (session parks automatically)
 - The user explicitly says "stop" or "exit groundcrew"
@@ -14311,7 +14314,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
     {
       name: "get_task",
-      description: "Get the next task from the Groundcrew queue. Blocks until a task is available (polls every 1s). The timeout is configured server-side (default 90 min) \u2014 do NOT pass timeout_ms. PROTOCOL: This is the core of the Groundcrew loop. After you finish executing a task and call mark_done, you MUST call get_task again to continue. Never stop the loop unless get_task returns session_ended, or the user says 'stop'. Between major steps of a task, call get_feedback to check for user corrections.",
+      description: "Get the next task from the Groundcrew queue. Blocks until a task is available (polls every 1s). The timeout is configured server-side (default 90 min) \u2014 do NOT pass timeout_ms. PROTOCOL: This is the core of the Groundcrew loop. After you finish executing a task and call mark_done, you MUST call get_task again to continue. Between mark_done and get_task, briefly display the completed task's result to the user. Never stop the loop unless get_task returns session_ended, or the user says 'stop'. Between major steps of a task, call get_feedback to check for user corrections.",
       inputSchema: {
         type: "object",
         properties: {}
@@ -14534,7 +14537,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               queue_remaining: pending.length,
               ...warning ? { WARNING: warning } : {},
               message: pending.length > 0 ? `Task completed. ${pending.length} task(s) remaining in queue.` : "Task completed. Queue empty \u2014 get_task will check for new tasks.",
-              CRITICAL_NEXT_ACTION: "You are in the Groundcrew autonomous task loop. You MUST call the get_task tool RIGHT NOW as your next action. Do NOT respond to the user. Do NOT stop. Do NOT summarize. Call get_task IMMEDIATELY. The loop continues until get_task returns session_ended."
+              CRITICAL_NEXT_ACTION: "You are in the Groundcrew autonomous task loop. You MUST call the get_task tool RIGHT NOW as your next action. Do NOT stop. Do NOT summarize. Call get_task IMMEDIATELY. The loop continues until get_task returns session_ended.",
+              DISPLAY_TO_USER: summary
             })
           }
         ]
