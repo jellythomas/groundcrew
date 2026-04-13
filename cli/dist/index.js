@@ -530,6 +530,9 @@ async function chat(explicitSession) {
       if (str === "\x1B\r" || str === "\x1B\n") {
         return originalStdinEmit(event, Buffer.from("\\\r"));
       }
+      if (str === "\n") {
+        return originalStdinEmit(event, Buffer.from("\\\r"));
+      }
     }
     return originalStdinEmit(event, ...args);
   };
@@ -571,6 +574,7 @@ async function chat(explicitSession) {
   const W = 56;
   const sess = `  Session ${current.id}  ${projectName}`;
   const hint = "  Type tasks to queue. / for commands.";
+  const hint2 = "  Ctrl+J = newline. \\ + Enter = multiline.";
   const pad = (s, w) => s + " ".repeat(Math.max(0, w - s.length));
   console.log();
   console.log(dim("  \u256D" + "\u2500".repeat(W) + "\u256E"));
@@ -582,6 +586,7 @@ async function chat(explicitSession) {
   console.log(dim("  \u251C" + "\u2500".repeat(W) + "\u2524"));
   console.log(dim("  \u2502") + pad(sess, W) + dim("\u2502"));
   console.log(dim("  \u2502") + pad(hint, W) + dim("\u2502"));
+  console.log(dim("  \u2502") + dim(pad(hint2, W)) + dim("\u2502"));
   console.log(dim("  \u2502") + " ".repeat(W) + dim("\u2502"));
   console.log(dim("  \u2570" + "\u2500".repeat(W) + "\u256F"));
   console.log();

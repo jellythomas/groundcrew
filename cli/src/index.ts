@@ -705,8 +705,16 @@ async function chat(explicitSession?: string): Promise<void> {
         return originalStdinEmit(event, Buffer.from(replaced));
       }
 
-      // --- Alt+Enter (universal fallback: ESC + CR) ---
+      // --- Alt+Enter (ESC + CR/LF) — universal fallback for newline ---
       if (str === "\x1b\r" || str === "\x1b\n") {
+        return originalStdinEmit(event, Buffer.from("\\\r"));
+      }
+
+      // --- Ctrl+J (LF, 0x0A) — cross-terminal newline ---
+      // In raw mode: Enter sends \r (CR), Ctrl+J sends \n (LF).
+      // This is the only reliable way to distinguish "newline" from "submit"
+      // across ALL terminal emulators (Terminal.app, iTerm2, Kitty, etc.)
+      if (str === "\n") {
         return originalStdinEmit(event, Buffer.from("\\\r"));
       }
     }
@@ -756,6 +764,7 @@ async function chat(explicitSession?: string): Promise<void> {
   const W = 56;
   const sess = `  Session ${current.id}  ${projectName}`;
   const hint = "  Type tasks to queue. / for commands.";
+  const hint2 = "  Ctrl+J = newline. \\ + Enter = multiline.";
   const pad = (s: string, w: number) => s + " ".repeat(Math.max(0, w - s.length));
   console.log();
   console.log(dim("  \u256d" + "\u2500".repeat(W) + "\u256e"));
@@ -767,6 +776,7 @@ async function chat(explicitSession?: string): Promise<void> {
   console.log(dim("  \u251c" + "\u2500".repeat(W) + "\u2524"));
   console.log(dim("  \u2502") + pad(sess, W) + dim("\u2502"));
   console.log(dim("  \u2502") + pad(hint, W) + dim("\u2502"));
+  console.log(dim("  \u2502") + dim(pad(hint2, W)) + dim("\u2502"));
   console.log(dim("  \u2502") + " ".repeat(W) + dim("\u2502"));
   console.log(dim("  \u2570" + "\u2500".repeat(W) + "\u256f"));
   console.log();
