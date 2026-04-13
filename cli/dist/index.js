@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import{createRequire}from'module';const require=createRequire(import.meta.url);
+
 // src/index.ts
 import fs from "fs/promises";
 import { existsSync } from "fs";
@@ -603,7 +603,7 @@ async function chat(explicitSession) {
   const W = 56;
   const sess = `  Session ${current.id}  ${projectName}`;
   const hint = "  Type tasks to queue. / for commands.";
-  const hint2 = "  Shift+Enter = newline. \\ + Enter = multiline.";
+  const hint2 = "  Shift+Enter = newline. Ctrl+C = clear input.";
   const pad = (s, w) => s + " ".repeat(Math.max(0, w - s.length));
   console.log();
   console.log(dim("  \u256D" + "\u2500".repeat(W) + "\u256E"));
@@ -620,6 +620,18 @@ async function chat(explicitSession) {
   console.log(dim("  \u2570" + "\u2500".repeat(W) + "\u256F"));
   console.log();
   let continuationBuffer = [];
+  rl.on("SIGINT", () => {
+    const line = rl.line;
+    if (line || continuationBuffer.length > 0) {
+      continuationBuffer = [];
+      process.stdout.write("\n");
+      prompt();
+    } else {
+      process.stdout.write("\x1B[?2004l\x1B[<u");
+      console.log(dim("\nBye."));
+      process.exit(0);
+    }
+  });
   rl.on("close", () => {
     process.stdout.write("\x1B[?2004l\x1B[<u");
     console.log(dim("\nBye."));

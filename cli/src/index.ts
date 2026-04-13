@@ -808,7 +808,7 @@ async function chat(explicitSession?: string): Promise<void> {
   const W = 56;
   const sess = `  Session ${current.id}  ${projectName}`;
   const hint = "  Type tasks to queue. / for commands.";
-  const hint2 = "  Shift+Enter = newline. \\ + Enter = multiline.";
+  const hint2 = "  Shift+Enter = newline. Ctrl+C = clear input.";
   const pad = (s: string, w: number) => s + " ".repeat(Math.max(0, w - s.length));
   console.log();
   console.log(dim("  \u256d" + "\u2500".repeat(W) + "\u256e"));
@@ -827,7 +827,24 @@ async function chat(explicitSession?: string): Promise<void> {
 
   let continuationBuffer: string[] = [];
 
-  // Handle Ctrl+C gracefully
+  // Ctrl+C: clear current input (like Claude Code / Copilot CLI)
+  // If line has text → clear it and re-prompt
+  // If line is empty → exit
+  rl.on("SIGINT", () => {
+    const line = (rl as any).line as string;
+    if (line || continuationBuffer.length > 0) {
+      continuationBuffer = [];
+      // Clear the current line visually and re-prompt
+      process.stdout.write("\n");
+      prompt();
+    } else {
+      process.stdout.write("\x1b[?2004l\x1b[<u");
+      console.log(dim("\nBye."));
+      process.exit(0);
+    }
+  });
+
+  // Handle stream close (pipe EOF, etc.)
   rl.on("close", () => {
     process.stdout.write("\x1b[?2004l\x1b[<u"); // disable bracketed paste + Kitty
     console.log(dim("\nBye."));
