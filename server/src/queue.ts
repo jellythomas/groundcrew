@@ -90,6 +90,9 @@ export async function getNextTask(timeoutMs: number): Promise<Task | null> {
     return task;
   }
 
+  // Instant return mode — no blocking, no slicing risk
+  if (timeoutMs <= 0) return null;
+
   // Ensure the queue file exists for watching
   await fs.writeFile(queueFile, JSON.stringify(emptyQueue()), { flag: "wx" }).catch(() => {});
 

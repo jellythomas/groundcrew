@@ -14033,6 +14033,7 @@ async function getNextTask(timeoutMs) {
     await writeQueue(queue);
     return task;
   }
+  if (timeoutMs <= 0) return null;
   await fs2.writeFile(queueFile, JSON.stringify(emptyQueue()), { flag: "wx" }).catch(() => {
   });
   return new Promise((resolve) => {
@@ -14254,10 +14255,25 @@ async function getStatus() {
 }
 
 // src/index.ts
-var SESSION_TIMEOUT = parseInt(process.env.GROUNDCREW_SESSION_TIMEOUT || "5400000");
-var POLL_WINDOW = 25e3;
-var sessionWaitMs = 0;
+var IDLE_TIMEOUT = parseInt(process.env.GROUNDCREW_IDLE_TIMEOUT || "1800000");
+var MAX_LIFETIME = parseInt(process.env.GROUNDCREW_MAX_LIFETIME || "7200000");
 var FEEDBACK_TIMEOUT = 3e4;
+var sessionStartedAt = 0;
+var lastTaskAt = 0;
+function sessionAge() {
+  return sessionStartedAt ? Date.now() - sessionStartedAt : 0;
+}
+function idleTime() {
+  return lastTaskAt ? Date.now() - lastTaskAt : 0;
+}
+function isOvertime() {
+  return sessionAge() >= MAX_LIFETIME;
+}
+function overtimeWarning() {
+  if (!isOvertime()) return void 0;
+  const mins = Math.round(sessionAge() / 6e4);
+  return `\u26A0 Session has been running for ${mins} min (exceeds ${Math.round(MAX_LIFETIME / 6e4)} min limit). Session will end when queue empties. Wrap up or add final tasks.`;
+}
 var GROUNDCREW_INSTRUCTIONS = `
 ## Groundcrew \u2014 Autonomous Task Queue for Claude Code
 
@@ -14396,32 +14412,39 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
   switch (name) {
     case "get_task": {
-      const task = await getNextTask(POLL_WINDOW);
-      if (task) {
-        sessionWaitMs = 0;
-        cacheActiveTask(task);
-        await updateSession({ status: "active", currentTask: task.id });
-        const remaining = (await listPending()).length;
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify({
-                status: "task_available",
-                session_id: getSessionId(),
-                task_id: task.id,
-                task: task.task,
-                source: task.source,
-                priority: task.priority,
-                queue_remaining: remaining,
-                PROTOCOL: "You are in the Groundcrew autonomous task loop. Execute this task fully. Use get_feedback between major steps. When done, call mark_done with summary AND full output. After mark_done, you MUST call get_task again \u2014 NEVER stop the loop."
-              })
-            }
-          ]
-        };
+      const pending = await listPending();
+      if (pending.length > 0) {
+        const task = await getNextTask(0);
+        if (task) {
+          lastTaskAt = Date.now();
+          cacheActiveTask(task);
+          await updateSession({ status: "active", currentTask: task.id });
+          const remaining = (await listPending()).length;
+          const warning2 = overtimeWarning();
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  status: "task_available",
+                  session_id: getSessionId(),
+                  task_id: task.id,
+                  task: task.task,
+                  source: task.source,
+                  priority: task.priority,
+                  queue_remaining: remaining,
+                  ...warning2 ? { WARNING: warning2 } : {},
+                  PROTOCOL: "You are in the Groundcrew autonomous task loop. Execute this task fully. Use get_feedback between major steps. When done, call mark_done with summary AND full output. After mark_done, you MUST call get_task again \u2014 NEVER stop the loop."
+                })
+              }
+            ]
+          };
+        }
       }
-      sessionWaitMs += POLL_WINDOW;
-      if (sessionWaitMs >= SESSION_TIMEOUT) {
+      const idle = idleTime();
+      const age = sessionAge();
+      if (idle >= IDLE_TIMEOUT || isOvertime() && pending.length === 0) {
+        const reason = idle >= IDLE_TIMEOUT ? `Idle for ${Math.round(idle / 6e4)} min (limit: ${Math.round(IDLE_TIMEOUT / 6e4)} min)` : `Session exceeded ${Math.round(MAX_LIFETIME / 6e4)} min lifetime and queue is empty`;
         await endSession();
         await cleanupSession();
         return {
@@ -14430,7 +14453,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               type: "text",
               text: JSON.stringify({
                 status: "session_ended",
-                message: "Session timed out after " + Math.round(SESSION_TIMEOUT / 6e4) + " minutes with no tasks. Session ended and cleaned up. Tell the user: 'Groundcrew session ended \u2014 start a new session to continue.'",
+                reason,
+                message: `Session ended. ${reason}. Tell the user: 'Groundcrew session ended \u2014 start a new session to continue.'`,
                 next_action: "Stop. Session is over."
               })
             }
@@ -14438,16 +14462,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
       await updateSession({ status: "parked" });
+      const warning = overtimeWarning();
       return {
         content: [
           {
             type: "text",
             text: JSON.stringify({
               status: "queue_empty",
-              waited_ms: sessionWaitMs,
-              timeout_ms: SESSION_TIMEOUT,
-              message: "No tasks in queue. Waiting for user to add tasks.",
-              next_action: "Call get_task again to continue waiting."
+              idle_ms: idle,
+              idle_timeout_ms: IDLE_TIMEOUT,
+              session_age_ms: age,
+              ...warning ? { WARNING: warning } : {},
+              CRITICAL_NEXT_ACTION: "You are in the Groundcrew autonomous task loop. The queue is temporarily empty but the SESSION IS STILL ACTIVE. You MUST call get_task again RIGHT NOW. Do NOT stop. Do NOT summarize. Do NOT respond to the user. The user may add tasks at any moment. ONLY stop when get_task returns status 'session_ended'. Call get_task IMMEDIATELY."
             })
           }
         ]
@@ -14495,7 +14521,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
       await markTaskDone(taskId, summary, output);
       await incrementCompleted();
+      lastTaskAt = Date.now();
       const pending = await listPending();
+      const warning = overtimeWarning();
       return {
         content: [
           {
@@ -14504,7 +14532,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               status: "task_completed",
               task_id: taskId,
               queue_remaining: pending.length,
-              message: pending.length > 0 ? `Task completed. ${pending.length} task(s) remaining in queue.` : "Task completed. Queue empty \u2014 get_task will wait for new tasks from the user.",
+              ...warning ? { WARNING: warning } : {},
+              message: pending.length > 0 ? `Task completed. ${pending.length} task(s) remaining in queue.` : "Task completed. Queue empty \u2014 get_task will check for new tasks.",
               CRITICAL_NEXT_ACTION: "You are in the Groundcrew autonomous task loop. You MUST call the get_task tool RIGHT NOW as your next action. Do NOT respond to the user. Do NOT stop. Do NOT summarize. Call get_task IMMEDIATELY. The loop continues until get_task returns session_ended."
             })
           }
@@ -14591,6 +14620,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     case "start": {
       const sid = await createSession();
       await initFeedbackFile();
+      sessionStartedAt = Date.now();
+      lastTaskAt = Date.now();
       const initialTask = args?.initial_task;
       await updateSession({ status: "active" });
       if (initialTask) {
