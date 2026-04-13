@@ -626,17 +626,34 @@ async function chat(explicitSession?: string): Promise<void> {
   }
 
   const projectName = path.basename(current.cwd);
+  const banner = [
+    " \u2588\u2588\u2588\u2588\u2588\u2588  \u2588\u2588\u2588\u2588\u2588\u2588    \u2588\u2588\u2588\u2588\u2588\u2588  \u2588\u2588    \u2588\u2588 \u2588\u2588    \u2588\u2588 \u2588\u2588\u2588\u2588\u2588    ",
+    "\u2588\u2588       \u2588\u2588   \u2588\u2588  \u2588\u2588    \u2588\u2588 \u2588\u2588    \u2588\u2588 \u2588\u2588\u2588   \u2588\u2588 \u2588\u2588   \u2588\u2588  ",
+    "\u2588\u2588  \u2588\u2588\u2588\u2588 \u2588\u2588\u2588\u2588\u2588\u2588   \u2588\u2588    \u2588\u2588 \u2588\u2588    \u2588\u2588 \u2588\u2588 \u2588\u2588 \u2588\u2588 \u2588\u2588    \u2588\u2588 ",
+    "\u2588\u2588    \u2588\u2588 \u2588\u2588  \u2588\u2588   \u2588\u2588    \u2588\u2588 \u2588\u2588    \u2588\u2588 \u2588\u2588   \u2588\u2588\u2588 \u2588\u2588   \u2588\u2588  ",
+    " \u2588\u2588\u2588\u2588\u2588\u2588  \u2588\u2588   \u2588\u2588   \u2588\u2588\u2588\u2588\u2588\u2588   \u2588\u2588\u2588\u2588\u2588\u2588  \u2588\u2588    \u2588\u2588 \u2588\u2588\u2588\u2588\u2588    ",
+    "         \u2588\u2588\u2588\u2588\u2588\u2588  \u2588\u2588\u2588\u2588\u2588\u2588   \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588 \u2588\u2588    \u2588\u2588      ",
+    "        \u2588\u2588       \u2588\u2588   \u2588\u2588  \u2588\u2588       \u2588\u2588    \u2588\u2588      ",
+    "        \u2588\u2588       \u2588\u2588\u2588\u2588\u2588\u2588   \u2588\u2588\u2588\u2588\u2588\u2588   \u2588\u2588 \u2588\u2588 \u2588\u2588      ",
+    "        \u2588\u2588       \u2588\u2588  \u2588\u2588   \u2588\u2588       \u2588\u2588\u2588\u2588 \u2588\u2588\u2588\u2588     ",
+    "         \u2588\u2588\u2588\u2588\u2588\u2588  \u2588\u2588   \u2588\u2588  \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588  \u2588\u2588   \u2588\u2588      ",
+  ];
+  const W = 56;
+  const sess = `  Session ${current.id}  ${projectName}`;
+  const hint = "  Type tasks to queue. / for commands.";
+  const pad = (s: string, w: number) => s + " ".repeat(Math.max(0, w - s.length));
   console.log();
-  console.log(dim("  ╭──────────────────────────────────────────────────────────────╮"));
-  console.log(dim("  │                                                              │"));
-  console.log(dim("  │") + cyan("    ╔═╗┬─┐┌─┐┬ ┬┌┐┌┌┬┐╔═╗┬─┐┌─┐┬ ┬") + dim("                       │"));
-  console.log(dim("  │") + cyan("    ║ ╦├┬┘│ ││ ││││ ││║  ╠╦╝├┤ │││") + dim("                       │"));
-  console.log(dim("  │") + cyan("    ╚═╝┴└─└─┘└─┘┘└┘─┴┘╚═╝┴└─└─┘└┴┘") + dim("                       │"));
-  console.log(dim("  │                                                              │"));
-  console.log(dim("  │") + "  Session: " + bold(current.id) + "  " + dim(projectName) + " ".repeat(Math.max(1, 48 - current.id.length - projectName.length)) + dim("│"));
-  console.log(dim("  │") + "  Type tasks to queue. " + cyan("/") + " for commands. " + cyan("\\") + " for multiline." + dim("  │"));
-  console.log(dim("  │                                                              │"));
-  console.log(dim("  ╰──────────────────────────────────────────────────────────────╯"));
+  console.log(dim("  \u256d" + "\u2500".repeat(W) + "\u256e"));
+  console.log(dim("  \u2502") + " ".repeat(W) + dim("\u2502"));
+  for (const line of banner) {
+    console.log(dim("  \u2502") + bold(cyan(pad(line, W))) + dim("\u2502"));
+  }
+  console.log(dim("  \u2502") + " ".repeat(W) + dim("\u2502"));
+  console.log(dim("  \u251c" + "\u2500".repeat(W) + "\u2524"));
+  console.log(dim("  \u2502") + pad(sess, W) + dim("\u2502"));
+  console.log(dim("  \u2502") + pad(hint, W) + dim("\u2502"));
+  console.log(dim("  \u2502") + " ".repeat(W) + dim("\u2502"));
+  console.log(dim("  \u2570" + "\u2500".repeat(W) + "\u256f"));
   console.log();
 
   let continuationBuffer: string[] = [];
