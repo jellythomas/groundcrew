@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-
+import{createRequire}from'module';const require=createRequire(import.meta.url);
 // src/index.ts
 import fs from "fs/promises";
 import { existsSync } from "fs";
@@ -429,162 +429,331 @@ var CHAT_COMMANDS = [
   { cmd: "/clear", desc: "Clear pending tasks" },
   { cmd: "/exit", desc: "Exit chat" }
 ];
-function chatCompleter(line) {
-  if (!line.startsWith("/")) return [[], line];
-  const matches = CHAT_COMMANDS.filter((c) => c.cmd.startsWith(line));
-  if (matches.length === 1) {
-    return [[matches[0].cmd + " "], line];
-  }
-  if (matches.length > 1) {
-    const display = matches.map((c) => `${c.cmd.padEnd(14)} ${c.desc}`);
-    console.log();
-    display.forEach((d) => console.log(`  ${d}`));
-    return [matches.map((c) => c.cmd), line];
-  }
-  return [[], line];
-}
-function setupInlineSuggestions(rl) {
-  let dropdownLines = 0;
-  let ghostLen = 0;
-  const clearGhost = () => {
-    const buf = [];
-    if (dropdownLines > 0) {
-      for (let i = 0; i < dropdownLines; i++) {
-        buf.push("\x1B[B\x1B[2K");
+function readMultilineInput(sessionId) {
+  return new Promise((resolve) => {
+    const lines = [""];
+    let crow = 0;
+    let ccol = 0;
+    const padWidth = sessionId.length + 5;
+    let lastTermRow = 0;
+    let pasteBuffer = "";
+    let isPasting = false;
+    const fullText = () => lines.join("\n").trim();
+    const render = () => {
+      const buf = [];
+      if (lastTermRow > 0) buf.push(`\x1B[${lastTermRow}A`);
+      buf.push("\r\x1B[J");
+      for (let i = 0; i < lines.length; i++) {
+        if (i > 0) buf.push("\n");
+        if (i === 0) {
+          buf.push(dim(`[${sessionId}]`) + " " + bold(">") + " " + lines[i]);
+        } else {
+          buf.push(" ".repeat(padWidth) + lines[i]);
+        }
       }
-      buf.push(`\x1B[${dropdownLines}A`);
-      dropdownLines = 0;
-    }
-    if (ghostLen > 0) {
-      buf.push("\x1B[s");
-      buf.push("\x1B[999C");
-      buf.push(`\x1B[${ghostLen}D`);
-      buf.push("\x1B[K");
-      buf.push("\x1B[u");
-      ghostLen = 0;
-    }
-    if (buf.length) process.stdout.write(buf.join(""));
-  };
-  const showGhost = () => {
-    const line = rl.line;
-    if (!line || !line.startsWith("/") || line.includes(" ")) return;
-    const matches = CHAT_COMMANDS.filter((c) => c.cmd.startsWith(line));
-    if (matches.length === 0) return;
-    const shown = matches.slice(0, 5);
-    const best = shown[0];
-    const remainder = best.cmd.slice(line.length);
-    if (!remainder && shown.length === 1) return;
-    const buf = [];
-    buf.push("\x1B[K");
-    if (remainder) {
-      buf.push(`\x1B[2m${remainder}\x1B[0m`);
-      ghostLen = remainder.length;
-      buf.push(`\x1B[${remainder.length}D`);
-    }
-    if (shown.length > 1 || shown.length === 1 && remainder) {
-      const count = shown.length;
-      for (let i = 0; i < count; i++) buf.push("\n");
-      buf.push(`\x1B[${count}A`);
-      for (let i = 0; i < count; i++) {
-        buf.push(`\x1B[B\r\x1B[2K`);
-        buf.push(`  \x1B[36m${shown[i].cmd.padEnd(14)}\x1B[0m\x1B[2m${shown[i].desc}\x1B[0m`);
+      const lastRow = lines.length - 1;
+      const rowsUp = lastRow - crow;
+      if (rowsUp > 0) buf.push(`\x1B[${rowsUp}A`);
+      buf.push("\r");
+      const col = padWidth + ccol;
+      if (col > 0) buf.push(`\x1B[${col}C`);
+      lastTermRow = crow;
+      process.stdout.write(buf.join(""));
+    };
+    const finish = (result) => {
+      process.stdin.removeListener("data", onData);
+      resolve(result);
+    };
+    const submit = () => {
+      const text = fullText();
+      const lastRow = lines.length - 1;
+      const rowsDown = lastRow - crow;
+      const buf = [];
+      if (rowsDown > 0) buf.push(`\x1B[${rowsDown}B`);
+      buf.push("\r");
+      const endCol = padWidth + lines[lastRow].length;
+      if (endCol > 0) buf.push(`\x1B[${endCol}C`);
+      buf.push("\n");
+      process.stdout.write(buf.join(""));
+      lastTermRow = 0;
+      finish(text || null);
+    };
+    const insertText = (text) => {
+      const chunks = text.split(/\r?\n/);
+      const before = lines[crow].slice(0, ccol);
+      const after = lines[crow].slice(ccol);
+      if (chunks.length === 1) {
+        lines[crow] = before + chunks[0] + after;
+        ccol += chunks[0].length;
+      } else {
+        lines[crow] = before + chunks[0];
+        const middle = chunks.slice(1, -1);
+        const last = chunks[chunks.length - 1];
+        lines.splice(crow + 1, 0, ...middle, last + after);
+        crow += chunks.length - 1;
+        ccol = last.length;
       }
-      dropdownLines = count;
-      buf.push(`\x1B[${count}A`);
-      buf.push(`\r`);
-    }
-    process.stdout.write(buf.join(""));
-    if (dropdownLines > 0) {
-      rl._refreshLine();
-      if (remainder) {
-        process.stdout.write(`\x1B[K\x1B[2m${remainder}\x1B[0m\x1B[${remainder.length}D`);
+      render();
+    };
+    const insertNewline = () => {
+      const before = lines[crow].slice(0, ccol);
+      const after = lines[crow].slice(ccol);
+      lines[crow] = before;
+      lines.splice(crow + 1, 0, after);
+      crow++;
+      ccol = 0;
+      render();
+    };
+    const doBackspace = () => {
+      if (ccol > 0) {
+        lines[crow] = lines[crow].slice(0, ccol - 1) + lines[crow].slice(ccol);
+        ccol--;
+      } else if (crow > 0) {
+        const prevLen = lines[crow - 1].length;
+        lines[crow - 1] += lines[crow];
+        lines.splice(crow, 1);
+        crow--;
+        ccol = prevLen;
       }
-    }
-  };
-  process.stdin.on("keypress", (_ch, key) => {
-    if (!key) return;
-    clearGhost();
-    if (key.name !== "return" && key.name !== "tab") {
-      setImmediate(showGhost);
-    }
+      render();
+    };
+    const doDelete = () => {
+      if (ccol < lines[crow].length) {
+        lines[crow] = lines[crow].slice(0, ccol) + lines[crow].slice(ccol + 1);
+      } else if (crow < lines.length - 1) {
+        lines[crow] += lines[crow + 1];
+        lines.splice(crow + 1, 1);
+      }
+      render();
+    };
+    const processKeys = (str) => {
+      let i = 0;
+      while (i < str.length) {
+        if (str.startsWith("\x1B[13;2u", i)) {
+          insertNewline();
+          i += 7;
+          continue;
+        }
+        if (i + 1 < str.length && str[i] === "\x1B" && (str[i + 1] === "\r" || str[i + 1] === "\n")) {
+          insertNewline();
+          i += 2;
+          continue;
+        }
+        if (str.startsWith("\x1B[A", i)) {
+          if (crow > 0) {
+            crow--;
+            ccol = Math.min(ccol, lines[crow].length);
+            render();
+          }
+          i += 3;
+          continue;
+        }
+        if (str.startsWith("\x1B[B", i)) {
+          if (crow < lines.length - 1) {
+            crow++;
+            ccol = Math.min(ccol, lines[crow].length);
+            render();
+          }
+          i += 3;
+          continue;
+        }
+        if (str.startsWith("\x1B[C", i)) {
+          if (ccol < lines[crow].length) ccol++;
+          else if (crow < lines.length - 1) {
+            crow++;
+            ccol = 0;
+          }
+          render();
+          i += 3;
+          continue;
+        }
+        if (str.startsWith("\x1B[D", i)) {
+          if (ccol > 0) ccol--;
+          else if (crow > 0) {
+            crow--;
+            ccol = lines[crow].length;
+          }
+          render();
+          i += 3;
+          continue;
+        }
+        if (str.startsWith("\x1B[3~", i)) {
+          doDelete();
+          i += 4;
+          continue;
+        }
+        if (str.startsWith("\x1B[H", i)) {
+          ccol = 0;
+          render();
+          i += 3;
+          continue;
+        }
+        if (str.startsWith("\x1B[F", i)) {
+          ccol = lines[crow].length;
+          render();
+          i += 3;
+          continue;
+        }
+        if (str[i] === "\x1B" && i + 1 < str.length && str[i + 1] === "[") {
+          let j = i + 2;
+          while (j < str.length && str.charCodeAt(j) >= 48 && str.charCodeAt(j) <= 63) j++;
+          if (j < str.length) j++;
+          i = j;
+          continue;
+        }
+        if (str[i] === "\x1B") {
+          i++;
+          continue;
+        }
+        if (str[i] === "") {
+          if (fullText()) {
+            const lastRow = lines.length - 1;
+            const rowsDown = lastRow - crow;
+            if (rowsDown > 0) process.stdout.write(`\x1B[${rowsDown}B`);
+            process.stdout.write("\n");
+            lines.length = 0;
+            lines.push("");
+            crow = 0;
+            ccol = 0;
+            lastTermRow = 0;
+            render();
+          } else {
+            process.stdout.write("\n");
+            finish(null);
+            return;
+          }
+          i++;
+          continue;
+        }
+        if (str[i] === "") {
+          if (fullText()) {
+            doDelete();
+          } else {
+            process.stdout.write("\n");
+            finish(null);
+            return;
+          }
+          i++;
+          continue;
+        }
+        if (str[i] === "") {
+          ccol = 0;
+          render();
+          i++;
+          continue;
+        }
+        if (str[i] === "") {
+          ccol = lines[crow].length;
+          render();
+          i++;
+          continue;
+        }
+        if (str[i] === "") {
+          lines[crow] = lines[crow].slice(ccol);
+          ccol = 0;
+          render();
+          i++;
+          continue;
+        }
+        if (str[i] === "\v") {
+          lines[crow] = lines[crow].slice(0, ccol);
+          render();
+          i++;
+          continue;
+        }
+        if (str[i] === "") {
+          const before = lines[crow].slice(0, ccol);
+          const stripped = before.replace(/\s+$/, "");
+          const sp = stripped.lastIndexOf(" ");
+          const newBefore = sp >= 0 ? stripped.slice(0, sp + 1) : "";
+          lines[crow] = newBefore + lines[crow].slice(ccol);
+          ccol = newBefore.length;
+          render();
+          i++;
+          continue;
+        }
+        if (str[i] === "\n") {
+          insertNewline();
+          i++;
+          continue;
+        }
+        if (str[i] === "\r") {
+          submit();
+          return;
+        }
+        if (str[i] === "\x7F" || str[i] === "\b") {
+          doBackspace();
+          i++;
+          continue;
+        }
+        if (str[i] === "	") {
+          if (lines.length === 1 && lines[0].startsWith("/")) {
+            const matches = CHAT_COMMANDS.filter((c) => c.cmd.startsWith(lines[0]));
+            if (matches.length === 1) {
+              lines[0] = matches[0].cmd + " ";
+              ccol = lines[0].length;
+              render();
+            } else if (matches.length > 1) {
+              const lastRow = lines.length - 1;
+              const rowsDown = lastRow - crow;
+              if (rowsDown > 0) process.stdout.write(`\x1B[${rowsDown}B`);
+              process.stdout.write("\n");
+              for (const m of matches) {
+                process.stdout.write(`  ${cyan(m.cmd.padEnd(14))} ${dim(m.desc)}
+`);
+              }
+              lastTermRow = 0;
+              render();
+            }
+          }
+          i++;
+          continue;
+        }
+        const code = str.charCodeAt(i);
+        if (code >= 32) {
+          lines[crow] = lines[crow].slice(0, ccol) + str[i] + lines[crow].slice(ccol);
+          ccol++;
+          render();
+        }
+        i++;
+      }
+    };
+    const onData = (data) => {
+      let str = data.toString();
+      const ps = str.indexOf("\x1B[200~");
+      if (ps !== -1) {
+        isPasting = true;
+        const before = str.slice(0, ps);
+        if (before) processKeys(before);
+        str = str.slice(ps + 6);
+      }
+      if (isPasting) {
+        const pe = str.indexOf("\x1B[201~");
+        if (pe !== -1) {
+          pasteBuffer += str.slice(0, pe);
+          isPasting = false;
+          const pasted = pasteBuffer.replace(/[\r\n]+$/, "");
+          pasteBuffer = "";
+          if (pasted) insertText(pasted);
+          const after = str.slice(pe + 6);
+          if (after) processKeys(after);
+        } else {
+          pasteBuffer += str;
+        }
+        return;
+      }
+      processKeys(str);
+    };
+    process.stdin.on("data", onData);
+    render();
   });
 }
 async function chat(explicitSession) {
   process.stdout.write("\x1B[?2004h\x1B[>1u");
-  const originalStdinEmit = process.stdin.emit.bind(process.stdin);
-  let pasteBuffer = "";
-  let isPasting = false;
-  process.stdin.emit = function(event, ...args) {
-    if (event === "data") {
-      const data = args[0];
-      let str = typeof data === "string" ? data : data.toString();
-      const pasteStart = str.indexOf("\x1B[200~");
-      if (pasteStart !== -1) {
-        isPasting = true;
-        if (pasteStart > 0) {
-          originalStdinEmit(event, Buffer.from(str.slice(0, pasteStart)));
-        }
-        str = str.slice(pasteStart + 6);
-      }
-      if (isPasting) {
-        const pasteEnd = str.indexOf("\x1B[201~");
-        if (pasteEnd !== -1) {
-          pasteBuffer += str.slice(0, pasteEnd);
-          const afterPaste = str.slice(pasteEnd + 6);
-          isPasting = false;
-          const pasted = pasteBuffer.replace(/[\r\n]+$/, "");
-          pasteBuffer = "";
-          if (pasted.includes("\n") || pasted.includes("\r")) {
-            const lines = pasted.split(/\r?\n/);
-            for (let i = 0; i < lines.length - 1; i++) {
-              originalStdinEmit(event, Buffer.from(lines[i] + "\\\r"));
-            }
-            originalStdinEmit(event, Buffer.from(lines[lines.length - 1]));
-          } else {
-            originalStdinEmit(event, Buffer.from(pasted));
-          }
-          if (afterPaste) {
-            return originalStdinEmit(event, Buffer.from(afterPaste));
-          }
-          return false;
-        } else {
-          pasteBuffer += str;
-          return false;
-        }
-      }
-      if (str.includes("\x1B[13;2u")) {
-        const replaced = str.replace(/\x1b\[13;2u/g, "\\\r");
-        return originalStdinEmit(event, Buffer.from(replaced));
-      }
-      if (str === "\x1B\r" || str === "\x1B\n") {
-        return originalStdinEmit(event, Buffer.from("\\\r"));
-      }
-      if (str === "\n") {
-        return originalStdinEmit(event, Buffer.from("\\\r"));
-      }
-      if ((str === "\x7F" || str === "\b") && continuationBuffer.length > 0) {
-        const currentLine = rl.line;
-        const cursor = rl.cursor;
-        if (cursor === 0 && currentLine.length === 0) {
-          const prevLine = continuationBuffer.pop();
-          rl.line = prevLine;
-          rl.cursor = prevLine.length;
-          const isCont = continuationBuffer.length > 0;
-          const prefix = isCont ? `${dim(`[${current.id}]`)} ${dim("...")} ` : `${dim(`[${current.id}]`)} ${bold(">")} `;
-          rl.setPrompt(prefix);
-          rl._refreshLine();
-          return false;
-        }
-      }
-    }
-    return originalStdinEmit(event, ...args);
-  };
   const rl = readline.createInterface({
     input: process.stdin,
-    output: process.stdout,
-    completer: chatCompleter
+    output: process.stdout
   });
-  setupInlineSuggestions(rl);
   let current = null;
   if (explicitSession) {
     const dir = path.join(SESSIONS_DIR, explicitSession);
@@ -601,6 +770,7 @@ async function chat(explicitSession) {
       return;
     }
   }
+  rl.close();
   const projectName = path.basename(current.cwd);
   const banner = [
     " \u2588\u2588\u2588\u2588\u2588\u2588  \u2588\u2588\u2588\u2588\u2588\u2588    \u2588\u2588\u2588\u2588\u2588\u2588  \u2588\u2588    \u2588\u2588 \u2588\u2588    \u2588\u2588 \u2588\u2588\u2588\u2588\u2588    ",
@@ -633,152 +803,91 @@ async function chat(explicitSession) {
   console.log(dim("  \u2502") + " ".repeat(W) + dim("\u2502"));
   console.log(dim("  \u2570" + "\u2500".repeat(W) + "\u256F"));
   console.log();
-  let continuationBuffer = [];
-  rl.on("SIGINT", () => {
-    const line = rl.line;
-    if (line || continuationBuffer.length > 0) {
-      continuationBuffer = [];
-      process.stdout.write("\n");
-      prompt();
-    } else {
-      process.stdout.write("\x1B[?2004l\x1B[<u");
-      console.log(dim("\nBye."));
-      process.exit(0);
-    }
-  });
-  rl.on("close", () => {
+  process.stdin.setRawMode(true);
+  process.stdin.resume();
+  const exitChat = () => {
     process.stdout.write("\x1B[?2004l\x1B[<u");
-    console.log(dim("\nBye."));
+    process.stdin.setRawMode(false);
+    console.log(dim("Bye."));
     process.exit(0);
-  });
-  const prompt = () => {
-    const isContinuation = continuationBuffer.length > 0;
-    const prefix = isContinuation ? `${dim(`[${current.id}]`)} ${dim("...")} ` : `${dim(`[${current.id}]`)} ${bold(">")} `;
-    rl.setPrompt(prefix);
-    rl.question(prefix, async (line) => {
-      if (line.endsWith("\\")) {
-        continuationBuffer.push(line.slice(0, -1));
-        prompt();
-        return;
-      }
-      if (continuationBuffer.length > 0) {
-        continuationBuffer.push(line);
-        const fullText = continuationBuffer.join("\n").trim();
-        continuationBuffer = [];
-        if (fullText) {
-          try {
-            if (fullText.startsWith("/")) {
-              await add(fullText, 0, current.dir);
-            } else {
-              await add(fullText, 0, current.dir);
-            }
-          } catch (err) {
-            console.error(red(err.message));
-          }
-        }
-        prompt();
-        return;
-      }
-      const trimmed = line.trim();
-      if (!trimmed) {
-        prompt();
-        return;
-      }
-      try {
-        if (trimmed === "/quit" || trimmed === "/exit") {
-          console.log(dim("Bye."));
-          rl.close();
-          return;
-        }
-        if (trimmed === "/sessions") {
-          const choices = await listSessionChoices();
-          if (choices.length === 0) {
-            console.log(dim("No active sessions."));
-          } else {
-            choices.forEach((s, i) => {
-              const marker = s.id === current.id ? green("*") : " ";
-              const pName = path.basename(s.cwd);
-              console.log(`  ${marker} ${bold(String(i + 1))}. ${cyan(s.id)}  ${dim(pName)} | ${s.status} | ${s.minutes}min | ${s.tasks} done`);
-            });
-          }
-          prompt();
-          return;
-        }
-        if (trimmed.startsWith("/switch")) {
-          const arg = trimmed.slice(7).trim();
-          const choices = await listSessionChoices();
-          if (choices.length === 0) {
-            console.log(red("No active sessions."));
-            prompt();
-            return;
-          }
-          const idx = parseInt(arg) - 1;
-          if (idx >= 0 && idx < choices.length) {
-            current = choices[idx];
-            console.log(green(`Switched to ${current.id} (${path.basename(current.cwd)})`));
-          } else {
-            choices.forEach((s, i) => {
-              const marker = s.id === current.id ? green("*") : " ";
-              console.log(`  ${marker} ${bold(String(i + 1))}. ${cyan(s.id)}  ${dim(path.basename(s.cwd))}`);
-            });
-          }
-          prompt();
-          return;
-        }
-        if (trimmed === "/status") {
-          await status(current.dir);
-          prompt();
-          return;
-        }
-        if (trimmed === "/history") {
-          await history();
-          prompt();
-          return;
-        }
-        if (trimmed.startsWith("/feedback ")) {
-          const msg = trimmed.slice(10).trim();
-          if (msg) {
-            await feedback(msg, current.dir);
-          } else {
-            console.log(red("Usage: /feedback <message>"));
-          }
-          prompt();
-          return;
-        }
-        if (trimmed.startsWith("/priority ")) {
-          const task = trimmed.slice(10).trim();
-          if (task) {
-            await add(task, 9, current.dir);
-          } else {
-            console.log(red("Usage: /priority <task>"));
-          }
-          prompt();
-          return;
-        }
-        if (trimmed === "/queue") {
-          await listQueueCmd(current.dir);
-          prompt();
-          return;
-        }
-        if (trimmed === "/clear") {
-          await clear(current.dir);
-          prompt();
-          return;
-        }
-        if (trimmed.startsWith("/")) {
-          console.log(red(`Unknown command: ${trimmed.split(" ")[0]}`));
-          console.log(dim("  Press Tab to see available commands"));
-          prompt();
-          return;
-        }
-        await add(trimmed, 0, current.dir);
-      } catch (err) {
-        console.error(red(err.message));
-      }
-      prompt();
-    });
   };
-  prompt();
+  while (true) {
+    const text = await readMultilineInput(current.id);
+    if (text === null) exitChat();
+    if (!text) continue;
+    const trimmed = text.trim();
+    try {
+      if (trimmed === "/quit" || trimmed === "/exit") exitChat();
+      if (trimmed === "/sessions") {
+        const choices = await listSessionChoices();
+        if (choices.length === 0) {
+          console.log(dim("No active sessions."));
+        } else {
+          choices.forEach((s, i) => {
+            const marker = s.id === current.id ? green("*") : " ";
+            const pName = path.basename(s.cwd);
+            console.log(`  ${marker} ${bold(String(i + 1))}. ${cyan(s.id)}  ${dim(pName)} | ${s.status} | ${s.minutes}min | ${s.tasks} done`);
+          });
+        }
+        continue;
+      }
+      if (trimmed.startsWith("/switch")) {
+        const arg = trimmed.slice(7).trim();
+        const choices = await listSessionChoices();
+        if (choices.length === 0) {
+          console.log(red("No active sessions."));
+          continue;
+        }
+        const idx = parseInt(arg) - 1;
+        if (idx >= 0 && idx < choices.length) {
+          current = choices[idx];
+          console.log(green(`Switched to ${current.id} (${path.basename(current.cwd)})`));
+        } else {
+          choices.forEach((s, i) => {
+            const marker = s.id === current.id ? green("*") : " ";
+            console.log(`  ${marker} ${bold(String(i + 1))}. ${cyan(s.id)}  ${dim(path.basename(s.cwd))}`);
+          });
+        }
+        continue;
+      }
+      if (trimmed === "/status") {
+        await status(current.dir);
+        continue;
+      }
+      if (trimmed === "/history") {
+        await history();
+        continue;
+      }
+      if (trimmed.startsWith("/feedback ")) {
+        const msg = trimmed.slice(10).trim();
+        if (msg) await feedback(msg, current.dir);
+        else console.log(red("Usage: /feedback <message>"));
+        continue;
+      }
+      if (trimmed.startsWith("/priority ")) {
+        const task = trimmed.slice(10).trim();
+        if (task) await add(task, 9, current.dir);
+        else console.log(red("Usage: /priority <task>"));
+        continue;
+      }
+      if (trimmed === "/queue") {
+        await listQueueCmd(current.dir);
+        continue;
+      }
+      if (trimmed === "/clear") {
+        await clear(current.dir);
+        continue;
+      }
+      if (trimmed.startsWith("/")) {
+        console.log(red(`Unknown command: ${trimmed.split(" ")[0]}`));
+        console.log(dim("  Press Tab to see available commands"));
+        continue;
+      }
+      await add(trimmed, 0, current.dir);
+    } catch (err) {
+      console.error(red(err.message));
+    }
+  }
 }
 function usage() {
   console.log(`

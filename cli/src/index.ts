@@ -565,238 +565,328 @@ const CHAT_COMMANDS: Array<{ cmd: string; desc: string }> = [
   { cmd: "/exit",      desc: "Exit chat" },
 ];
 
-function chatCompleter(line: string): [string[], string] {
-  if (!line.startsWith("/")) return [[], line];
-  const matches = CHAT_COMMANDS.filter((c) => c.cmd.startsWith(line));
-
-  if (matches.length === 1) {
-    return [[matches[0].cmd + " "], line];
-  }
-
-  if (matches.length > 1) {
-    const display = matches.map((c) => `${c.cmd.padEnd(14)} ${c.desc}`);
-    console.log();
-    display.forEach((d) => console.log(`  ${d}`));
-    return [matches.map((c) => c.cmd), line];
-  }
-
-  return [[], line];
-}
-
 /**
- * Show inline ghost + multi-line dropdown as user types / commands.
- * Best match completion shown inline (dimmed) after cursor.
- * All matches (max 5) shown as dropdown lines below the prompt.
- * Uses only relative cursor movement — no absolute column needed.
+ * Custom multiline editor — replaces readline for chat input.
+ * No `\` line endings, no `...` prefix, clean aligned continuation.
+ * Uses ANSI escape sequences for in-place rendering.
+ *
+ * Submit: Enter
+ * Newline: Shift+Enter (Kitty), Alt+Enter, Ctrl+J
+ * Clear: Ctrl+C (clears input, or exits if empty)
+ * Navigation: Arrow keys, Home/End, Ctrl+A/E
+ * Editing: Backspace, Delete, Ctrl+U/K/W/D
+ * Tab: slash command completion
+ * Paste: bracketed paste with multiline support
  */
-function setupInlineSuggestions(rl: readline.Interface): void {
-  let dropdownLines = 0;  // extra lines rendered below prompt
-  let ghostLen = 0;        // length of inline ghost text on prompt line
+function readMultilineInput(sessionId: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    const lines: string[] = [""];
+    let crow = 0;  // cursor row in lines[]
+    let ccol = 0;  // cursor col in lines[crow]
 
-  const clearGhost = () => {
-    const buf: string[] = [];
-    // Clear dropdown lines below prompt
-    if (dropdownLines > 0) {
-      for (let i = 0; i < dropdownLines; i++) {
-        buf.push("\x1b[B\x1b[2K"); // down + clear entire line
+    // Visible width of prompt: "[sessionId] > "
+    const padWidth = sessionId.length + 5; // [ + id + ] + space + > + space = len+5
+
+    // Track which terminal row the cursor was on after last render
+    let lastTermRow = 0;
+    let pasteBuffer = "";
+    let isPasting = false;
+
+    const fullText = () => lines.join("\n").trim();
+
+    const render = () => {
+      const buf: string[] = [];
+
+      // Move to start of input area
+      if (lastTermRow > 0) buf.push(`\x1b[${lastTermRow}A`);
+      buf.push("\r\x1b[J"); // col 0 + clear to end of screen
+
+      // Draw each line
+      for (let i = 0; i < lines.length; i++) {
+        if (i > 0) buf.push("\n");
+        if (i === 0) {
+          buf.push(dim(`[${sessionId}]`) + " " + bold(">") + " " + lines[i]);
+        } else {
+          buf.push(" ".repeat(padWidth) + lines[i]);
+        }
       }
-      buf.push(`\x1b[${dropdownLines}A`); // back up to prompt line
-      dropdownLines = 0;
-    }
-    // Clear inline ghost only if one is showing — save cursor, jump to
-    // ghost start (far right), erase it, then restore cursor position.
-    // This avoids nuking typed text when cursor is mid-line (left arrow).
-    if (ghostLen > 0) {
-      buf.push("\x1b[s");                   // save cursor position
-      buf.push("\x1b[999C");                // jump to far right of line
-      buf.push(`\x1b[${ghostLen}D`);        // back up to ghost start
-      buf.push("\x1b[K");                   // clear from ghost start to EOL
-      buf.push("\x1b[u");                   // restore cursor position
-      ghostLen = 0;
-    }
-    if (buf.length) process.stdout.write(buf.join(""));
-  };
 
-  const showGhost = () => {
-    const line = (rl as any).line as string;
-    if (!line || !line.startsWith("/") || line.includes(" ")) return;
+      // Position cursor at (crow, ccol)
+      const lastRow = lines.length - 1;
+      const rowsUp = lastRow - crow;
+      if (rowsUp > 0) buf.push(`\x1b[${rowsUp}A`);
 
-    const matches = CHAT_COMMANDS.filter((c) => c.cmd.startsWith(line));
-    if (matches.length === 0) return;
+      buf.push("\r");
+      const col = padWidth + ccol;
+      if (col > 0) buf.push(`\x1b[${col}C`);
 
-    const shown = matches.slice(0, 5);
-    const best = shown[0];
-    const remainder = best.cmd.slice(line.length);
-    if (!remainder && shown.length === 1) return;
+      lastTermRow = crow;
+      process.stdout.write(buf.join(""));
+    };
 
-    const buf: string[] = [];
+    const finish = (result: string | null) => {
+      process.stdin.removeListener("data", onData);
+      resolve(result);
+    };
 
-    // Inline ghost: cursor is already at end of typed text (readline did that)
-    // Just clear rest of line and write dimmed remainder
-    buf.push("\x1b[K");
-    if (remainder) {
-      buf.push(`\x1b[2m${remainder}\x1b[0m`);
-      ghostLen = remainder.length;
-      // Move cursor back to end of typed text
-      buf.push(`\x1b[${remainder.length}D`);
-    }
+    const submit = () => {
+      const text = fullText();
+      // Move cursor to end of input for clean output
+      const lastRow = lines.length - 1;
+      const rowsDown = lastRow - crow;
+      const buf: string[] = [];
+      if (rowsDown > 0) buf.push(`\x1b[${rowsDown}B`);
+      buf.push("\r");
+      const endCol = padWidth + lines[lastRow].length;
+      if (endCol > 0) buf.push(`\x1b[${endCol}C`);
+      buf.push("\n");
+      process.stdout.write(buf.join(""));
+      lastTermRow = 0;
+      finish(text || null);
+    };
 
-    // Dropdown: show all matches below prompt
-    if (shown.length > 1 || (shown.length === 1 && remainder)) {
-      const count = shown.length;
-      // Make room by writing newlines (handles terminal bottom scroll)
-      for (let i = 0; i < count; i++) buf.push("\n");
-      buf.push(`\x1b[${count}A`); // back to prompt line
+    const insertText = (text: string) => {
+      const chunks = text.split(/\r?\n/);
+      const before = lines[crow].slice(0, ccol);
+      const after = lines[crow].slice(ccol);
 
-      // Write each dropdown line: cyan command + dim description
-      for (let i = 0; i < count; i++) {
-        buf.push(`\x1b[B\r\x1b[2K`); // down + col 1 + clear
-        buf.push(`  \x1b[36m${shown[i].cmd.padEnd(14)}\x1b[0m\x1b[2m${shown[i].desc}\x1b[0m`);
+      if (chunks.length === 1) {
+        lines[crow] = before + chunks[0] + after;
+        ccol += chunks[0].length;
+      } else {
+        lines[crow] = before + chunks[0];
+        const middle = chunks.slice(1, -1);
+        const last = chunks[chunks.length - 1];
+        lines.splice(crow + 1, 0, ...middle, last + after);
+        crow += chunks.length - 1;
+        ccol = last.length;
       }
-      dropdownLines = count;
+      render();
+    };
 
-      // Back to prompt line and restore horizontal position
-      // Move up to prompt line
-      buf.push(`\x1b[${count}A`);
-      // Move to column 1, then rewrite prompt+line to position cursor correctly
-      buf.push(`\r`);
-      // Let readline handle cursor positioning
-    }
+    const insertNewline = () => {
+      const before = lines[crow].slice(0, ccol);
+      const after = lines[crow].slice(ccol);
+      lines[crow] = before;
+      lines.splice(crow + 1, 0, after);
+      crow++;
+      ccol = 0;
+      render();
+    };
 
-    process.stdout.write(buf.join(""));
-    // After dropdown, force readline to redraw prompt line to fix cursor position
-    if (dropdownLines > 0) {
-      (rl as any)._refreshLine();
-      // Re-draw inline ghost since _refreshLine cleared it
-      if (remainder) {
-        process.stdout.write(`\x1b[K\x1b[2m${remainder}\x1b[0m\x1b[${remainder.length}D`);
+    const doBackspace = () => {
+      if (ccol > 0) {
+        lines[crow] = lines[crow].slice(0, ccol - 1) + lines[crow].slice(ccol);
+        ccol--;
+      } else if (crow > 0) {
+        const prevLen = lines[crow - 1].length;
+        lines[crow - 1] += lines[crow];
+        lines.splice(crow, 1);
+        crow--;
+        ccol = prevLen;
       }
-    }
-  };
+      render();
+    };
 
-  process.stdin.on("keypress", (_ch: string, key: any) => {
-    if (!key) return;
+    const doDelete = () => {
+      if (ccol < lines[crow].length) {
+        lines[crow] = lines[crow].slice(0, ccol) + lines[crow].slice(ccol + 1);
+      } else if (crow < lines.length - 1) {
+        lines[crow] += lines[crow + 1];
+        lines.splice(crow + 1, 1);
+      }
+      render();
+    };
 
-    clearGhost();
-    if (key.name !== "return" && key.name !== "tab") {
-      setImmediate(showGhost);
-    }
+    const processKeys = (str: string) => {
+      let i = 0;
+      while (i < str.length) {
+        // Shift+Enter (Kitty: \x1b[13;2u)
+        if (str.startsWith("\x1b[13;2u", i)) { insertNewline(); i += 7; continue; }
+
+        // Alt+Enter (ESC + CR or ESC + LF)
+        if (i + 1 < str.length && str[i] === "\x1b" && (str[i + 1] === "\r" || str[i + 1] === "\n")) {
+          insertNewline(); i += 2; continue;
+        }
+
+        // Arrow Up
+        if (str.startsWith("\x1b[A", i)) {
+          if (crow > 0) { crow--; ccol = Math.min(ccol, lines[crow].length); render(); }
+          i += 3; continue;
+        }
+        // Arrow Down
+        if (str.startsWith("\x1b[B", i)) {
+          if (crow < lines.length - 1) { crow++; ccol = Math.min(ccol, lines[crow].length); render(); }
+          i += 3; continue;
+        }
+        // Arrow Right
+        if (str.startsWith("\x1b[C", i)) {
+          if (ccol < lines[crow].length) ccol++;
+          else if (crow < lines.length - 1) { crow++; ccol = 0; }
+          render(); i += 3; continue;
+        }
+        // Arrow Left
+        if (str.startsWith("\x1b[D", i)) {
+          if (ccol > 0) ccol--;
+          else if (crow > 0) { crow--; ccol = lines[crow].length; }
+          render(); i += 3; continue;
+        }
+
+        // Delete key (\x1b[3~)
+        if (str.startsWith("\x1b[3~", i)) { doDelete(); i += 4; continue; }
+
+        // Home (\x1b[H)
+        if (str.startsWith("\x1b[H", i)) { ccol = 0; render(); i += 3; continue; }
+        // End (\x1b[F)
+        if (str.startsWith("\x1b[F", i)) { ccol = lines[crow].length; render(); i += 3; continue; }
+
+        // Skip unknown CSI sequences
+        if (str[i] === "\x1b" && i + 1 < str.length && str[i + 1] === "[") {
+          let j = i + 2;
+          while (j < str.length && str.charCodeAt(j) >= 0x30 && str.charCodeAt(j) <= 0x3f) j++;
+          if (j < str.length) j++; // skip final byte
+          i = j; continue;
+        }
+        // Skip lone ESC
+        if (str[i] === "\x1b") { i++; continue; }
+
+        // Ctrl+C — clear input or exit
+        if (str[i] === "\x03") {
+          if (fullText()) {
+            // Move past current rendering, start fresh below
+            const lastRow = lines.length - 1;
+            const rowsDown = lastRow - crow;
+            if (rowsDown > 0) process.stdout.write(`\x1b[${rowsDown}B`);
+            process.stdout.write("\n");
+            lines.length = 0; lines.push("");
+            crow = 0; ccol = 0; lastTermRow = 0;
+            render();
+          } else {
+            process.stdout.write("\n");
+            finish(null); return;
+          }
+          i++; continue;
+        }
+
+        // Ctrl+D — delete char or exit on empty
+        if (str[i] === "\x04") {
+          if (fullText()) { doDelete(); } else { process.stdout.write("\n"); finish(null); return; }
+          i++; continue;
+        }
+
+        // Ctrl+A — home
+        if (str[i] === "\x01") { ccol = 0; render(); i++; continue; }
+        // Ctrl+E — end
+        if (str[i] === "\x05") { ccol = lines[crow].length; render(); i++; continue; }
+        // Ctrl+U — clear line before cursor
+        if (str[i] === "\x15") {
+          lines[crow] = lines[crow].slice(ccol); ccol = 0; render(); i++; continue;
+        }
+        // Ctrl+K — clear line after cursor
+        if (str[i] === "\x0b") {
+          lines[crow] = lines[crow].slice(0, ccol); render(); i++; continue;
+        }
+        // Ctrl+W — delete word before cursor
+        if (str[i] === "\x17") {
+          const before = lines[crow].slice(0, ccol);
+          const stripped = before.replace(/\s+$/, "");
+          const sp = stripped.lastIndexOf(" ");
+          const newBefore = sp >= 0 ? stripped.slice(0, sp + 1) : "";
+          lines[crow] = newBefore + lines[crow].slice(ccol);
+          ccol = newBefore.length; render(); i++; continue;
+        }
+
+        // Ctrl+J (LF, 0x0A) — newline (cross-terminal)
+        if (str[i] === "\n") { insertNewline(); i++; continue; }
+
+        // Enter (CR, 0x0D) — submit
+        if (str[i] === "\r") { submit(); return; }
+
+        // Backspace (DEL 0x7F or BS 0x08)
+        if (str[i] === "\x7f" || str[i] === "\b") { doBackspace(); i++; continue; }
+
+        // Tab — slash command completion
+        if (str[i] === "\t") {
+          if (lines.length === 1 && lines[0].startsWith("/")) {
+            const matches = CHAT_COMMANDS.filter(c => c.cmd.startsWith(lines[0]));
+            if (matches.length === 1) {
+              lines[0] = matches[0].cmd + " ";
+              ccol = lines[0].length; render();
+            } else if (matches.length > 1) {
+              // Show matches below, then re-render prompt
+              const lastRow = lines.length - 1;
+              const rowsDown = lastRow - crow;
+              if (rowsDown > 0) process.stdout.write(`\x1b[${rowsDown}B`);
+              process.stdout.write("\n");
+              for (const m of matches) {
+                process.stdout.write(`  ${cyan(m.cmd.padEnd(14))} ${dim(m.desc)}\n`);
+              }
+              lastTermRow = 0; render();
+            }
+          }
+          i++; continue;
+        }
+
+        // Regular printable character
+        const code = str.charCodeAt(i);
+        if (code >= 32) {
+          lines[crow] = lines[crow].slice(0, ccol) + str[i] + lines[crow].slice(ccol);
+          ccol++; render();
+        }
+        i++;
+      }
+    };
+
+    const onData = (data: Buffer) => {
+      let str = data.toString();
+
+      // Bracketed paste handling
+      const ps = str.indexOf("\x1b[200~");
+      if (ps !== -1) {
+        isPasting = true;
+        const before = str.slice(0, ps);
+        if (before) processKeys(before);
+        str = str.slice(ps + 6);
+      }
+      if (isPasting) {
+        const pe = str.indexOf("\x1b[201~");
+        if (pe !== -1) {
+          pasteBuffer += str.slice(0, pe);
+          isPasting = false;
+          const pasted = pasteBuffer.replace(/[\r\n]+$/, "");
+          pasteBuffer = "";
+          if (pasted) insertText(pasted);
+          const after = str.slice(pe + 6);
+          if (after) processKeys(after);
+        } else {
+          pasteBuffer += str;
+        }
+        return;
+      }
+
+      processKeys(str);
+    };
+
+    // Start listening
+    process.stdin.on("data", onData);
+    render();
   });
 }
 
+
+
 async function chat(explicitSession?: string): Promise<void> {
-  // Enable bracketed paste mode + Kitty keyboard protocol (Shift+Enter detection)
+  // Enable bracketed paste + Kitty keyboard protocol
   process.stdout.write("\x1b[?2004h\x1b[>1u");
 
-  // Intercept raw stdin for:
-  // 1. Bracketed paste (\x1b[200~ ... \x1b[201~) — buffer paste, submit as single task
-  // 2. Shift+Enter (\x1b[13;2u via Kitty protocol) — line continuation
-  // 3. Alt+Enter (\x1b\r — universal fallback) — line continuation
-  const originalStdinEmit = process.stdin.emit.bind(process.stdin);
-  let pasteBuffer = "";
-  let isPasting = false;
-
-  process.stdin.emit = function (event: string, ...args: any[]) {
-    if (event === "data") {
-      const data = args[0] as Buffer | string;
-      let str = typeof data === "string" ? data : data.toString();
-
-      // --- Bracketed paste handling ---
-      const pasteStart = str.indexOf("\x1b[200~");
-      if (pasteStart !== -1) {
-        isPasting = true;
-        if (pasteStart > 0) {
-          originalStdinEmit(event, Buffer.from(str.slice(0, pasteStart)));
-        }
-        str = str.slice(pasteStart + 6); // skip \x1b[200~
-      }
-
-      if (isPasting) {
-        const pasteEnd = str.indexOf("\x1b[201~");
-        if (pasteEnd !== -1) {
-          pasteBuffer += str.slice(0, pasteEnd);
-          const afterPaste = str.slice(pasteEnd + 6);
-          isPasting = false;
-
-          const pasted = pasteBuffer.replace(/[\r\n]+$/, "");
-          pasteBuffer = "";
-
-          if (pasted.includes("\n") || pasted.includes("\r")) {
-            // Multi-line paste: use backslash continuation for each internal line
-            const lines = pasted.split(/\r?\n/);
-            for (let i = 0; i < lines.length - 1; i++) {
-              originalStdinEmit(event, Buffer.from(lines[i] + "\\\r"));
-            }
-            // Last line: insert without auto-submit
-            originalStdinEmit(event, Buffer.from(lines[lines.length - 1]));
-          } else {
-            originalStdinEmit(event, Buffer.from(pasted));
-          }
-
-          if (afterPaste) {
-            return originalStdinEmit(event, Buffer.from(afterPaste));
-          }
-          return false;
-        } else {
-          pasteBuffer += str;
-          return false;
-        }
-      }
-
-      // --- Shift+Enter (Kitty protocol: \x1b[13;2u) ---
-      if (str.includes("\x1b[13;2u")) {
-        const replaced = str.replace(/\x1b\[13;2u/g, "\\\r");
-        return originalStdinEmit(event, Buffer.from(replaced));
-      }
-
-      // --- Alt+Enter (ESC + CR/LF) — universal fallback for newline ---
-      if (str === "\x1b\r" || str === "\x1b\n") {
-        return originalStdinEmit(event, Buffer.from("\\\r"));
-      }
-
-      // --- Ctrl+J (LF, 0x0A) — cross-terminal newline ---
-      // In raw mode: Enter sends \r (CR), Ctrl+J sends \n (LF).
-      // This is the only reliable way to distinguish "newline" from "submit"
-      // across ALL terminal emulators (Terminal.app, iTerm2, Kitty, etc.)
-      if (str === "\n") {
-        return originalStdinEmit(event, Buffer.from("\\\r"));
-      }
-
-      // --- Backspace at start of continuation → rejoin previous line ---
-      // \x7f = DEL (backspace on most terminals), \b = BS (some terminals)
-      if ((str === "\x7f" || str === "\b") && continuationBuffer.length > 0) {
-        const currentLine = (rl as any).line as string;
-        const cursor = (rl as any).cursor as number;
-        if (cursor === 0 && currentLine.length === 0) {
-          const prevLine = continuationBuffer.pop()!;
-          // Inject the previous line's text back into readline
-          (rl as any).line = prevLine;
-          (rl as any).cursor = prevLine.length;
-          // Update the prompt (may no longer be continuation)
-          const isCont = continuationBuffer.length > 0;
-          const prefix = isCont
-            ? `${dim(`[${current!.id}]`)} ${dim("...")} `
-            : `${dim(`[${current!.id}]`)} ${bold(">")} `;
-          rl.setPrompt(prefix);
-          (rl as any)._refreshLine();
-          return false;
-        }
-      }
-    }
-    return originalStdinEmit(event, ...args);
-  } as any;
-
+  // Use readline ONLY for session picker — then switch to custom multiline editor
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
-    completer: chatCompleter,
   });
-
-  setupInlineSuggestions(rl);
 
   let current: SessionChoice | null = null;
 
-  // Resolve initial session
   if (explicitSession) {
     const dir = path.join(SESSIONS_DIR, explicitSession);
     if (!existsSync(dir)) {
@@ -812,6 +902,9 @@ async function chat(explicitSession?: string): Promise<void> {
       return;
     }
   }
+
+  // Done with readline — close it before switching to raw mode
+  rl.close();
 
   const projectName = path.basename(current.cwd);
   const banner = [
@@ -846,170 +939,95 @@ async function chat(explicitSession?: string): Promise<void> {
   console.log(dim("  \u2570" + "\u2500".repeat(W) + "\u256f"));
   console.log();
 
-  let continuationBuffer: string[] = [];
+  // Enable raw mode for custom multiline editor
+  process.stdin.setRawMode(true);
+  process.stdin.resume();
 
-  // Ctrl+C: clear current input (like Claude Code / Copilot CLI)
-  // If line has text → clear it and re-prompt
-  // If line is empty → exit
-  rl.on("SIGINT", () => {
-    const line = (rl as any).line as string;
-    if (line || continuationBuffer.length > 0) {
-      continuationBuffer = [];
-      // Clear the current line visually and re-prompt
-      process.stdout.write("\n");
-      prompt();
-    } else {
-      process.stdout.write("\x1b[?2004l\x1b[<u");
-      console.log(dim("\nBye."));
-      process.exit(0);
-    }
-  });
-
-  // Handle stream close (pipe EOF, etc.)
-  rl.on("close", () => {
-    process.stdout.write("\x1b[?2004l\x1b[<u"); // disable bracketed paste + Kitty
-    console.log(dim("\nBye."));
+  const exitChat = () => {
+    process.stdout.write("\x1b[?2004l\x1b[<u");
+    process.stdin.setRawMode(false);
+    console.log(dim("Bye."));
     process.exit(0);
-  });
-
-  const prompt = () => {
-    const isContinuation = continuationBuffer.length > 0;
-    const prefix = isContinuation
-      ? `${dim(`[${current!.id}]`)} ${dim("...")} `
-      : `${dim(`[${current!.id}]`)} ${bold(">")} `;
-
-    rl.setPrompt(prefix);
-    rl.question(prefix, async (line) => {
-      // Line continuation with backslash
-      if (line.endsWith("\\")) {
-        continuationBuffer.push(line.slice(0, -1));
-        prompt(); return;
-      }
-
-      // If we were in continuation mode, join and process
-      if (continuationBuffer.length > 0) {
-        continuationBuffer.push(line);
-        const fullText = continuationBuffer.join("\n").trim();
-        continuationBuffer = [];
-        if (fullText) {
-          try {
-            if (fullText.startsWith("/")) {
-              // Process as command — use first line
-              // (multiline commands don't make sense, treat as task)
-              await add(fullText, 0, current!.dir);
-            } else {
-              await add(fullText, 0, current!.dir);
-            }
-          } catch (err: any) {
-            console.error(red(err.message));
-          }
-        }
-        prompt(); return;
-      }
-
-      const trimmed = line.trim();
-      if (!trimmed) { prompt(); return; }
-
-      try {
-        if (trimmed === "/quit" || trimmed === "/exit") {
-          console.log(dim("Bye."));
-          rl.close();
-          return;
-        }
-
-        if (trimmed === "/sessions") {
-          const choices = await listSessionChoices();
-          if (choices.length === 0) {
-            console.log(dim("No active sessions."));
-          } else {
-            choices.forEach((s, i) => {
-              const marker = s.id === current!.id ? green("*") : " ";
-              const pName = path.basename(s.cwd);
-              console.log(`  ${marker} ${bold(String(i + 1))}. ${cyan(s.id)}  ${dim(pName)} | ${s.status} | ${s.minutes}min | ${s.tasks} done`);
-            });
-          }
-          prompt(); return;
-        }
-
-        if (trimmed.startsWith("/switch")) {
-          const arg = trimmed.slice(7).trim();
-          const choices = await listSessionChoices();
-          if (choices.length === 0) {
-            console.log(red("No active sessions."));
-            prompt(); return;
-          }
-          const idx = parseInt(arg) - 1;
-          if (idx >= 0 && idx < choices.length) {
-            current = choices[idx];
-            console.log(green(`Switched to ${current.id} (${path.basename(current.cwd)})`));
-          } else {
-            // Show picker
-            choices.forEach((s, i) => {
-              const marker = s.id === current!.id ? green("*") : " ";
-              console.log(`  ${marker} ${bold(String(i + 1))}. ${cyan(s.id)}  ${dim(path.basename(s.cwd))}`);
-            });
-          }
-          prompt(); return;
-        }
-
-        if (trimmed === "/status") {
-          await status(current!.dir);
-          prompt(); return;
-        }
-
-        if (trimmed === "/history") {
-          await history();
-          prompt(); return;
-        }
-
-        if (trimmed.startsWith("/feedback ")) {
-          const msg = trimmed.slice(10).trim();
-          if (msg) {
-            await feedback(msg, current!.dir);
-          } else {
-            console.log(red("Usage: /feedback <message>"));
-          }
-          prompt(); return;
-        }
-
-        if (trimmed.startsWith("/priority ")) {
-          const task = trimmed.slice(10).trim();
-          if (task) {
-            await add(task, 9, current!.dir);
-          } else {
-            console.log(red("Usage: /priority <task>"));
-          }
-          prompt(); return;
-        }
-
-        if (trimmed === "/queue") {
-          await listQueueCmd(current!.dir);
-          prompt(); return;
-        }
-
-        if (trimmed === "/clear") {
-          await clear(current!.dir);
-          prompt(); return;
-        }
-
-        if (trimmed.startsWith("/")) {
-          console.log(red(`Unknown command: ${trimmed.split(" ")[0]}`));
-          console.log(dim("  Press Tab to see available commands"));
-          prompt(); return;
-        }
-
-        // Default: queue as task
-        await add(trimmed, 0, current!.dir);
-
-      } catch (err: any) {
-        console.error(red(err.message));
-      }
-
-      prompt();
-    });
   };
 
-  prompt();
+  // ── Main chat loop ─────────────────────────────────────────────────────────────────
+  while (true) {
+    const text = await readMultilineInput(current.id);
+
+    if (text === null) exitChat();
+    if (!text) continue;
+
+    const trimmed = text.trim();
+
+    try {
+      if (trimmed === "/quit" || trimmed === "/exit") exitChat();
+
+      if (trimmed === "/sessions") {
+        const choices = await listSessionChoices();
+        if (choices.length === 0) {
+          console.log(dim("No active sessions."));
+        } else {
+          choices.forEach((s, i) => {
+            const marker = s.id === current!.id ? green("*") : " ";
+            const pName = path.basename(s.cwd);
+            console.log(`  ${marker} ${bold(String(i + 1))}. ${cyan(s.id)}  ${dim(pName)} | ${s.status} | ${s.minutes}min | ${s.tasks} done`);
+          });
+        }
+        continue;
+      }
+
+      if (trimmed.startsWith("/switch")) {
+        const arg = trimmed.slice(7).trim();
+        const choices = await listSessionChoices();
+        if (choices.length === 0) {
+          console.log(red("No active sessions."));
+          continue;
+        }
+        const idx = parseInt(arg) - 1;
+        if (idx >= 0 && idx < choices.length) {
+          current = choices[idx];
+          console.log(green(`Switched to ${current.id} (${path.basename(current.cwd)})`));
+        } else {
+          choices.forEach((s, i) => {
+            const marker = s.id === current!.id ? green("*") : " ";
+            console.log(`  ${marker} ${bold(String(i + 1))}. ${cyan(s.id)}  ${dim(path.basename(s.cwd))}`);
+          });
+        }
+        continue;
+      }
+
+      if (trimmed === "/status") { await status(current.dir); continue; }
+      if (trimmed === "/history") { await history(); continue; }
+
+      if (trimmed.startsWith("/feedback ")) {
+        const msg = trimmed.slice(10).trim();
+        if (msg) await feedback(msg, current.dir);
+        else console.log(red("Usage: /feedback <message>"));
+        continue;
+      }
+
+      if (trimmed.startsWith("/priority ")) {
+        const task = trimmed.slice(10).trim();
+        if (task) await add(task, 9, current.dir);
+        else console.log(red("Usage: /priority <task>"));
+        continue;
+      }
+
+      if (trimmed === "/queue") { await listQueueCmd(current.dir); continue; }
+      if (trimmed === "/clear") { await clear(current.dir); continue; }
+
+      if (trimmed.startsWith("/")) {
+        console.log(red(`Unknown command: ${trimmed.split(" ")[0]}`));
+        console.log(dim("  Press Tab to see available commands"));
+        continue;
+      }
+
+      // Default: queue as task
+      await add(trimmed, 0, current.dir);
+    } catch (err: any) {
+      console.error(red(err.message));
+    }
+  }
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
