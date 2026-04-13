@@ -625,6 +625,16 @@ function setupInlineSuggestions(rl: readline.Interface): void {
 
   process.stdin.on("keypress", (_ch: string, key: any) => {
     if (!key) return;
+
+    // Shift+Enter: insert newline marker instead of submitting
+    if (key.name === "return" && key.shift) {
+      // Append backslash to trigger line continuation, then simulate Enter
+      const line = (rl as any).line as string;
+      (rl as any).line = line + "\\";
+      (rl as any).cursor = (rl as any).line.length;
+      return;
+    }
+
     clearGhost();
     if (key.name !== "return" && key.name !== "tab") {
       setImmediate(showGhost);

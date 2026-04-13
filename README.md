@@ -32,16 +32,17 @@ $ copilot                             $ groundcrew chat
 ```
 ┌──────────┐     ┌───────────┐     ┌──────────┐     ┌───────────┐
 │ get_task  │────►│  execute   │────►│ mark_done│────►│ get_task   │──► ...
-│ (blocks)  │     │  (tools)   │     │          │     │ (blocks)   │
-└──────────┘     └─────┬─────┘     └──────────┘     └───────────┘
-                       │
-                 ┌─────▼─────┐
-                 │get_feedback│
+│ (instant) │     │  (tools)   │     │          │     │ (instant)  │
+└─────┬────┘     └─────┬─────┘     └──────────┘     └───────────┘
+      │                │
+      ▼                ▼
+ queue_empty?    ┌───────────┐
+ retry ──┘       │get_feedback│
                  │  (quick)   │
                  └───────────┘
 ```
 
-The agent calls `get_task` after each completed task. This MCP tool **blocks** until you add a task to the queue — no LLM calls while waiting, no premium requests burned. It polls every 1 second for up to 90 minutes (configurable). When you add a task, it's picked up within a second.
+The agent calls `get_task` after each completed task. If the queue is empty, `get_task` returns instantly with `queue_empty` and the agent retries — no blocking, no MCP timeout risk. When you add a task, it's picked up on the next `get_task` call. Sessions stay alive for up to 30 minutes idle (configurable), with a 2-hour absolute lifetime soft limit.
 
 ### Premium Request Savings
 
@@ -129,7 +130,7 @@ Use """ to start/end multiline input.
     /history       Show completed tasks
     /queue         Show pending tasks
     /clear         Clear pending tasks
-    /quit          Exit chat
+    /exit          Exit chat
 
 [a1b2c3d4] > build the user registration endpoint
 ✓ Queued
@@ -236,20 +237,41 @@ groundcrew destroy --session a1b2c3d4
 groundcrew destroy
 ```
 
-### Session Timeout
+### Session Lifecycle & Timeouts
 
-Sessions stay alive for **90 minutes** by default, polling every 1 second for new tasks. When the timeout expires, the session automatically ends and cleans up. Configure via environment variable:
+Groundcrew manages three layers of timing to keep sessions alive without hitting MCP protocol limits or violating fair use:
+
+**Idle Timeout (30 min default)** — If no tasks arrive for 30 consecutive minutes, the session ends. The timer resets every time a task is received or completed.
+
+**Max Lifetime (2 hours default)** — Soft limit on total session duration from when `start` is called. After 2 hours, the agent receives a warning on every `get_task` and `mark_done` response. The session only ends when the queue is empty — active work is never interrupted.
+
+**Instant polling (no blocking)** — When the queue is empty, `get_task` returns immediately with `queue_empty`. The agent loops `get_task` calls, picking up new tasks as soon as they're added. This avoids MCP request timeouts entirely — each request completes in milliseconds.
+
+```
+Queue has task  → get_task returns instantly with task
+Queue empty     → get_task returns instantly with queue_empty
+                  Agent retries → task added → picked up on next call
+After 30 min idle  → get_task returns session_ended
+After 2h + empty   → get_task returns session_ended
+After 2h + tasks   → ⚠ warning on every response, keeps processing
+```
+
+Configure via environment variables:
 
 ```json
 // .mcp.json
 {
   "env": {
-    "GROUNDCREW_SESSION_TIMEOUT": "5400000"  // 90 min (default)
+    "GROUNDCREW_IDLE_TIMEOUT": "1800000",    // 30 min (default)
+    "GROUNDCREW_MAX_LIFETIME": "7200000"     // 2 hours (default)
   }
 }
 ```
 
-Set to `"900000"` for 15 min, `"3600000"` for 1 hour, `"7200000"` for 2 hours.
+| Setting | Default | Description |
+|---|---|---|
+| `GROUNDCREW_IDLE_TIMEOUT` | `1800000` (30 min) | End session after this much consecutive idle time |
+| `GROUNDCREW_MAX_LIFETIME` | `7200000` (2 hours) | Soft max session duration — warns, then ends when queue empties |
 
 ### Persistent History
 
@@ -307,7 +329,7 @@ Inside `groundcrew chat`, these commands are available (with Tab completion):
 | `/history` | Show completed tasks |
 | `/queue` | Show pending tasks |
 | `/clear` | Clear pending tasks |
-| `/quit` | Exit chat |
+| `/exit` | Exit chat |
 | `\` (end of line) | Continue input on next line |
 
 ## MCP Tools
@@ -317,7 +339,7 @@ These MCP tools are available when the plugin is installed. The agent automatica
 | Tool | Blocking | Description |
 |---|---|---|
 | `start` | No | Activates groundcrew mode. Called automatically when user mentions "groundcrew". Shows session ID and CLI commands. |
-| `get_task` | Yes (up to 90 min) | Returns the next task. Blocks with 1s polling until a task is available or session timeout. |
+| `get_task` | No (instant) | Returns next task or `queue_empty`. Agent loops this call — tasks picked up instantly. Session ends after idle timeout or max lifetime. |
 | `get_feedback` | Yes (30s) | Checks for user feedback. Blocks briefly, returns null if no feedback. |
 | `mark_done` | No | Marks task complete with summary and full output. Saves to session and project-level history. |
 | `report_status` | No | Reports progress. Triggers health warnings at 90/120 minutes. |
@@ -331,7 +353,8 @@ Environment variables for the MCP server (set in `.mcp.json`):
 
 | Variable | Default | Description |
 |---|---|---|
-| `GROUNDCREW_SESSION_TIMEOUT` | `5400000` | How long `get_task` blocks waiting for tasks (ms). Default 90 min. |
+| `GROUNDCREW_IDLE_TIMEOUT` | `1800000` | End session after this many ms of consecutive idle time. Default 30 min. |
+| `GROUNDCREW_MAX_LIFETIME` | `7200000` | Soft max session duration in ms. Warns after this, ends when queue empties. Default 2 hours. |
 
 ## Files Created
 

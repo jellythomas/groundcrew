@@ -468,6 +468,12 @@ function setupInlineSuggestions(rl) {
   };
   process.stdin.on("keypress", (_ch, key) => {
     if (!key) return;
+    if (key.name === "return" && key.shift) {
+      const line = rl.line;
+      rl.line = line + "\\";
+      rl.cursor = rl.line.length;
+      return;
+    }
     clearGhost();
     if (key.name !== "return" && key.name !== "tab") {
       setImmediate(showGhost);
