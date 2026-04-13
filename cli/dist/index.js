@@ -5,10 +5,39 @@ import fs from "fs/promises";
 import { existsSync } from "fs";
 import path from "path";
 import readline from "readline";
+import { execFile } from "child_process";
+import { promisify } from "util";
+var execFileAsync = promisify(execFile);
 var GROUNDCREW_DIR = ".groundcrew";
 var SESSIONS_DIR = path.join(GROUNDCREW_DIR, "sessions");
 var ACTIVE_SESSIONS_FILE = path.join(GROUNDCREW_DIR, "active-sessions.json");
 var HISTORY_FILE = path.join(GROUNDCREW_DIR, "history.json");
+async function resolveRoot() {
+  let root = null;
+  try {
+    const { stdout } = await execFileAsync("git", ["rev-parse", "--show-toplevel"]);
+    const gitRoot = stdout.trim();
+    if (gitRoot && existsSync(path.join(gitRoot, ".groundcrew"))) {
+      root = gitRoot;
+    }
+  } catch {
+  }
+  if (!root) {
+    let dir = process.cwd();
+    while (dir !== path.dirname(dir)) {
+      if (existsSync(path.join(dir, ".groundcrew"))) {
+        root = dir;
+        break;
+      }
+      dir = path.dirname(dir);
+    }
+  }
+  if (!root) root = process.cwd();
+  GROUNDCREW_DIR = path.join(root, ".groundcrew");
+  SESSIONS_DIR = path.join(GROUNDCREW_DIR, "sessions");
+  ACTIVE_SESSIONS_FILE = path.join(GROUNDCREW_DIR, "active-sessions.json");
+  HISTORY_FILE = path.join(GROUNDCREW_DIR, "history.json");
+}
 async function readActiveSessions() {
   try {
     return JSON.parse(await fs.readFile(ACTIVE_SESSIONS_FILE, "utf-8"));
@@ -574,7 +603,7 @@ async function chat(explicitSession) {
   const W = 56;
   const sess = `  Session ${current.id}  ${projectName}`;
   const hint = "  Type tasks to queue. / for commands.";
-  const hint2 = "  Ctrl+J = newline. \\ + Enter = multiline.";
+  const hint2 = "  Shift+Enter = newline. \\ + Enter = multiline.";
   const pad = (s, w) => s + " ".repeat(Math.max(0, w - s.length));
   console.log();
   console.log(dim("  \u256D" + "\u2500".repeat(W) + "\u256E"));
@@ -772,6 +801,7 @@ function extractFlag(args, flag) {
   return { value, remaining };
 }
 async function main() {
+  await resolveRoot();
   const rawArgs = process.argv.slice(2);
   const { value: explicitSession, remaining: args } = extractFlag(rawArgs, "--session");
   const command = args[0];

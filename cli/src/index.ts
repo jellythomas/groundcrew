@@ -2,11 +2,55 @@ import fs from "fs/promises";
 import { existsSync } from "fs";
 import path from "path";
 import readline from "readline";
+import { execFile } from "child_process";
+import { promisify } from "util";
 
-const GROUNDCREW_DIR = ".groundcrew";
-const SESSIONS_DIR = path.join(GROUNDCREW_DIR, "sessions");
-const ACTIVE_SESSIONS_FILE = path.join(GROUNDCREW_DIR, "active-sessions.json");
-const HISTORY_FILE = path.join(GROUNDCREW_DIR, "history.json");
+const execFileAsync = promisify(execFile);
+
+// Resolved at startup by resolveRoot() — git-aware project root discovery
+let GROUNDCREW_DIR = ".groundcrew";
+let SESSIONS_DIR = path.join(GROUNDCREW_DIR, "sessions");
+let ACTIVE_SESSIONS_FILE = path.join(GROUNDCREW_DIR, "active-sessions.json");
+let HISTORY_FILE = path.join(GROUNDCREW_DIR, "history.json");
+
+/**
+ * Resolve the project root that contains .groundcrew/.
+ * Uses git rev-parse --show-toplevel for worktree support, then walks up
+ * from CWD as fallback. This ensures the CLI works from subdirectories
+ * and git worktrees.
+ */
+async function resolveRoot(): Promise<void> {
+  let root: string | null = null;
+
+  // 1. Try git rev-parse --show-toplevel (worktree-aware)
+  try {
+    const { stdout } = await execFileAsync("git", ["rev-parse", "--show-toplevel"]);
+    const gitRoot = stdout.trim();
+    if (gitRoot && existsSync(path.join(gitRoot, ".groundcrew"))) {
+      root = gitRoot;
+    }
+  } catch { /* not a git repo or git not installed */ }
+
+  // 2. Walk up from CWD looking for .groundcrew/
+  if (!root) {
+    let dir = process.cwd();
+    while (dir !== path.dirname(dir)) {
+      if (existsSync(path.join(dir, ".groundcrew"))) {
+        root = dir;
+        break;
+      }
+      dir = path.dirname(dir);
+    }
+  }
+
+  // 3. Fallback to CWD (for `groundcrew init`)
+  if (!root) root = process.cwd();
+
+  GROUNDCREW_DIR = path.join(root, ".groundcrew");
+  SESSIONS_DIR = path.join(GROUNDCREW_DIR, "sessions");
+  ACTIVE_SESSIONS_FILE = path.join(GROUNDCREW_DIR, "active-sessions.json");
+  HISTORY_FILE = path.join(GROUNDCREW_DIR, "history.json");
+}
 
 interface Task {
   id: string;
@@ -764,7 +808,7 @@ async function chat(explicitSession?: string): Promise<void> {
   const W = 56;
   const sess = `  Session ${current.id}  ${projectName}`;
   const hint = "  Type tasks to queue. / for commands.";
-  const hint2 = "  Ctrl+J = newline. \\ + Enter = multiline.";
+  const hint2 = "  Shift+Enter = newline. \\ + Enter = multiline.";
   const pad = (s: string, w: number) => s + " ".repeat(Math.max(0, w - s.length));
   console.log();
   console.log(dim("  \u256d" + "\u2500".repeat(W) + "\u256e"));
@@ -981,6 +1025,9 @@ function extractFlag(args: string[], flag: string): { value: string | undefined;
 }
 
 async function main(): Promise<void> {
+  // Resolve .groundcrew/ root (git-aware for worktree + subdirectory support)
+  await resolveRoot();
+
   const rawArgs = process.argv.slice(2);
 
   // Extract --session flag from anywhere in args

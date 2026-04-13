@@ -1,6 +1,6 @@
 {
   "name": "groundcrew-cli",
-  "version": "0.15.12",
+  "version": "0.15.13",
   "description": "CLI companion for Groundcrew — queue tasks, send feedback, monitor your Copilot agent from another terminal.",
   "type": "module",
   "bin": {

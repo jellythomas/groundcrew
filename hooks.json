@@ -4,7 +4,7 @@
     "sessionStart": [
       {
         "type": "command",
-        "bash": "mkdir -p .groundcrew && echo '{\"started\":\"'$(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ)'\",\"tasks_completed\":0,\"status\":\"active\"}' > .groundcrew/session.json && echo \"$(pwd)\" > \"$HOME/.groundcrew-active-project\"",
+        "bash": "ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd) && mkdir -p \"$ROOT/.groundcrew\" && echo '{\"started\":\"'$(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ)'\",\"tasks_completed\":0,\"status\":\"active\"}' > \"$ROOT/.groundcrew/session.json\" && echo \"$ROOT\" > \"$HOME/.groundcrew-active-project\"",
         "cwd": ".",
         "timeoutSec": 5
       }
@@ -12,7 +12,7 @@
     "sessionEnd": [
       {
         "type": "command",
-        "bash": "[ -f .groundcrew/session.json ] && node -e \"const fs=require('fs'),s=JSON.parse(fs.readFileSync('.groundcrew/session.json','utf8'));s.ended=new Date().toISOString();s.status='ended';fs.writeFileSync('.groundcrew/session.json',JSON.stringify(s,null,2));\" || true",
+        "bash": "ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd); F=\"$ROOT/.groundcrew/session.json\"; [ -f \"$F\" ] && node -e \"const fs=require('fs'),f=process.argv[1],s=JSON.parse(fs.readFileSync(f,'utf8'));s.ended=new Date().toISOString();s.status='ended';fs.writeFileSync(f,JSON.stringify(s,null,2));\" \"$F\" || true",
         "cwd": ".",
         "timeoutSec": 5
       }
@@ -20,7 +20,7 @@
     "postToolUse": [
       {
         "type": "command",
-        "bash": "INPUT=$(cat); TOOL=$(echo \"$INPUT\" | jq -r '.toolName'); RESULT=$(echo \"$INPUT\" | jq -r '.toolResult.resultType'); [ -d .groundcrew ] && echo \"$(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ),$TOOL,$RESULT\" >> .groundcrew/tool-history.csv || true",
+        "bash": "INPUT=$(cat); TOOL=$(echo \"$INPUT\" | jq -r '.toolName'); RESULT=$(echo \"$INPUT\" | jq -r '.toolResult.resultType'); ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd); [ -d \"$ROOT/.groundcrew\" ] && echo \"$(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ),$TOOL,$RESULT\" >> \"$ROOT/.groundcrew/tool-history.csv\" || true",
         "cwd": ".",
         "timeoutSec": 5
       }
