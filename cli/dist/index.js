@@ -562,6 +562,20 @@ async function chat(explicitSession) {
       if (str === "\n") {
         return originalStdinEmit(event, Buffer.from("\\\r"));
       }
+      if ((str === "\x7F" || str === "\b") && continuationBuffer.length > 0) {
+        const currentLine = rl.line;
+        const cursor = rl.cursor;
+        if (cursor === 0 && currentLine.length === 0) {
+          const prevLine = continuationBuffer.pop();
+          rl.line = prevLine;
+          rl.cursor = prevLine.length;
+          const isCont = continuationBuffer.length > 0;
+          const prefix = isCont ? `${dim(`[${current.id}]`)} ${dim("...")} ` : `${dim(`[${current.id}]`)} ${bold(">")} `;
+          rl.setPrompt(prefix);
+          rl._refreshLine();
+          return false;
+        }
+      }
     }
     return originalStdinEmit(event, ...args);
   };

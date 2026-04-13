@@ -761,6 +761,27 @@ async function chat(explicitSession?: string): Promise<void> {
       if (str === "\n") {
         return originalStdinEmit(event, Buffer.from("\\\r"));
       }
+
+      // --- Backspace at start of continuation → rejoin previous line ---
+      // \x7f = DEL (backspace on most terminals), \b = BS (some terminals)
+      if ((str === "\x7f" || str === "\b") && continuationBuffer.length > 0) {
+        const currentLine = (rl as any).line as string;
+        const cursor = (rl as any).cursor as number;
+        if (cursor === 0 && currentLine.length === 0) {
+          const prevLine = continuationBuffer.pop()!;
+          // Inject the previous line's text back into readline
+          (rl as any).line = prevLine;
+          (rl as any).cursor = prevLine.length;
+          // Update the prompt (may no longer be continuation)
+          const isCont = continuationBuffer.length > 0;
+          const prefix = isCont
+            ? `${dim(`[${current!.id}]`)} ${dim("...")} `
+            : `${dim(`[${current!.id}]`)} ${bold(">")} `;
+          rl.setPrompt(prefix);
+          (rl as any)._refreshLine();
+          return false;
+        }
+      }
     }
     return originalStdinEmit(event, ...args);
   } as any;
