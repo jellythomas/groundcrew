@@ -626,7 +626,7 @@ function readMultilineInput(sessionId: string, projectName: string, gitCtx: { br
     const render = () => {
       const buf: string[] = [];
 
-      // Move to start of input area (includes separator line)
+      // Move to start of input area (includes separator line + suggestions)
       if (lastTermRow > 0) buf.push(`\x1b[${lastTermRow}A`);
       buf.push("\r\x1b[J"); // col 0 + clear to end of screen
 
@@ -652,17 +652,31 @@ function readMultilineInput(sessionId: string, projectName: string, gitCtx: { br
         }
       }
 
+      // Auto-show slash command suggestions below input
+      let suggestionRows = 0;
+      if (lines.length === 1 && lines[0].startsWith("/") && !lines[0].includes(" ")) {
+        const partial = lines[0];
+        const matches = CHAT_COMMANDS.filter(c => c.cmd.startsWith(partial));
+        if (matches.length > 0 && partial.length >= 1) {
+          for (const m of matches) {
+            buf.push(`\n  ${cyan(m.cmd.padEnd(14))} ${dim(m.desc)}`);
+            suggestionRows++;
+          }
+        }
+      }
+
       // Position cursor at (crow, ccol)
       const lastRow = lines.length - 1;
-      const rowsUp = lastRow - crow;
+      // Position cursor at (crow, ccol) — move up past remaining input lines + suggestions
+      const rowsUp = (lastRow - crow) + suggestionRows;
       if (rowsUp > 0) buf.push(`\x1b[${rowsUp}A`);
 
       buf.push("\r");
       const col = padWidth + ccol;
       if (col > 0) buf.push(`\x1b[${col}C`);
 
-      // lastTermRow = rows from cursor back to top of separator
-      // separator is 1 row, then crow rows of input below it
+      // lastTermRow = rows above cursor (separator + input lines above crow)
+      // Suggestion rows below cursor are cleared by \x1b[J on next render
       lastTermRow = 1 + crow;
       process.stdout.write(buf.join(""));
     };

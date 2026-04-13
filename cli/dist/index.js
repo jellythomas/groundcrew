@@ -494,8 +494,20 @@ function readMultilineInput(sessionId, projectName, gitCtx) {
           buf.push(" ".repeat(padWidth) + lines[i]);
         }
       }
+      let suggestionRows = 0;
+      if (lines.length === 1 && lines[0].startsWith("/") && !lines[0].includes(" ")) {
+        const partial = lines[0];
+        const matches = CHAT_COMMANDS.filter((c) => c.cmd.startsWith(partial));
+        if (matches.length > 0 && partial.length >= 1) {
+          for (const m of matches) {
+            buf.push(`
+  ${cyan(m.cmd.padEnd(14))} ${dim(m.desc)}`);
+            suggestionRows++;
+          }
+        }
+      }
       const lastRow = lines.length - 1;
-      const rowsUp = lastRow - crow;
+      const rowsUp = lastRow - crow + suggestionRows;
       if (rowsUp > 0) buf.push(`\x1B[${rowsUp}A`);
       buf.push("\r");
       const col = padWidth + ccol;
