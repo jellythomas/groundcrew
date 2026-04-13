@@ -647,6 +647,7 @@ function readMultilineInput(sessionId: string, projectName: string, gitCtx: { br
 
     // Visible width of prompt: "[sessionId] > "
     const padWidth = sessionId.length + 5; // [ + id + ] + space + > + space = len+5
+    const linePad = (i: number) => i === 0 ? padWidth : 0;
 
     // Track how many rows up from cursor to top of rendered area (including separator)
     let lastTermRow = 0;
@@ -680,7 +681,7 @@ function readMultilineInput(sessionId: string, projectName: string, gitCtx: { br
         if (i === 0) {
           buf.push(dim(`[${sessionId}]`) + " " + bold(">") + " " + lines[i]);
         } else {
-          buf.push(" ".repeat(padWidth) + lines[i]);
+          buf.push(lines[i]);
         }
       }
 
@@ -702,7 +703,7 @@ function readMultilineInput(sessionId: string, projectName: string, gitCtx: { br
 
       // Calculate actual terminal rows each line occupies (for wrapped lines)
       const termRowsForLine = (i: number): number => {
-        const lineLen = (i === 0 ? padWidth : padWidth) + lines[i].length;
+        const lineLen = linePad(i) + lines[i].length;
         return lineLen === 0 ? 1 : Math.max(1, Math.ceil(lineLen / termW));
       };
 
@@ -712,13 +713,14 @@ function readMultilineInput(sessionId: string, projectName: string, gitCtx: { br
       for (let i = lastRow; i > crow; i--) rowsBelowCursor += termRowsForLine(i);
       // Add any extra wrapped rows on the cursor line itself (below the cursor's row within wraps)
       const cursorLineTermRows = termRowsForLine(crow);
-      const cursorRowWithinLine = Math.floor((padWidth + ccol) / termW);
+      const cursorPad = linePad(crow);
+      const cursorRowWithinLine = Math.floor((cursorPad + ccol) / termW);
       rowsBelowCursor += (cursorLineTermRows - 1 - cursorRowWithinLine);
 
       if (rowsBelowCursor > 0) buf.push(`\x1b[${rowsBelowCursor}A`);
 
       buf.push("\r");
-      const col = (padWidth + ccol) % termW;
+      const col = (cursorPad + ccol) % termW;
       if (col > 0) buf.push(`\x1b[${col}C`);
 
       // lastTermRow = terminal rows above cursor (separator + wrapped input lines above crow + cursor's wrapped rows above)
@@ -747,7 +749,7 @@ function readMultilineInput(sessionId: string, projectName: string, gitCtx: { br
         if (i === 0) {
           buf.push(dim(`[${sessionId}]`) + " " + bold(">") + " " + lines[i]);
         } else {
-          buf.push(" ".repeat(padWidth) + lines[i]);
+          buf.push(lines[i]);
         }
       }
       buf.push("\n");

@@ -500,6 +500,7 @@ function readMultilineInput(sessionId, projectName, gitCtx, sessionDir) {
     let crow = 0;
     let ccol = 0;
     const padWidth = sessionId.length + 5;
+    const linePad = (i) => i === 0 ? padWidth : 0;
     let lastTermRow = 0;
     let pasteBuffer = "";
     let isPasting = false;
@@ -523,7 +524,7 @@ function readMultilineInput(sessionId, projectName, gitCtx, sessionDir) {
         if (i === 0) {
           buf.push(dim(`[${sessionId}]`) + " " + bold(">") + " " + lines[i]);
         } else {
-          buf.push(" ".repeat(padWidth) + lines[i]);
+          buf.push(lines[i]);
         }
       }
       let suggestionRows = 0;
@@ -540,17 +541,18 @@ function readMultilineInput(sessionId, projectName, gitCtx, sessionDir) {
       }
       const lastRow = lines.length - 1;
       const termRowsForLine = (i) => {
-        const lineLen = (i === 0 ? padWidth : padWidth) + lines[i].length;
+        const lineLen = linePad(i) + lines[i].length;
         return lineLen === 0 ? 1 : Math.max(1, Math.ceil(lineLen / termW));
       };
       let rowsBelowCursor = suggestionRows;
       for (let i = lastRow; i > crow; i--) rowsBelowCursor += termRowsForLine(i);
       const cursorLineTermRows = termRowsForLine(crow);
-      const cursorRowWithinLine = Math.floor((padWidth + ccol) / termW);
+      const cursorPad = linePad(crow);
+      const cursorRowWithinLine = Math.floor((cursorPad + ccol) / termW);
       rowsBelowCursor += cursorLineTermRows - 1 - cursorRowWithinLine;
       if (rowsBelowCursor > 0) buf.push(`\x1B[${rowsBelowCursor}A`);
       buf.push("\r");
-      const col = (padWidth + ccol) % termW;
+      const col = (cursorPad + ccol) % termW;
       if (col > 0) buf.push(`\x1B[${col}C`);
       let rowsAbove = 1;
       for (let i = 0; i < crow; i++) rowsAbove += termRowsForLine(i);
@@ -572,7 +574,7 @@ function readMultilineInput(sessionId, projectName, gitCtx, sessionDir) {
         if (i === 0) {
           buf.push(dim(`[${sessionId}]`) + " " + bold(">") + " " + lines[i]);
         } else {
-          buf.push(" ".repeat(padWidth) + lines[i]);
+          buf.push(lines[i]);
         }
       }
       buf.push("\n");
