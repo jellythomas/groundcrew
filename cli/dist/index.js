@@ -479,17 +479,34 @@ async function chat(explicitSession) {
     }
   }
   const projectName = path.basename(current.cwd);
+  const banner = [
+    " \u2588\u2588\u2588\u2588\u2588\u2588  \u2588\u2588\u2588\u2588\u2588\u2588    \u2588\u2588\u2588\u2588\u2588\u2588  \u2588\u2588    \u2588\u2588 \u2588\u2588    \u2588\u2588 \u2588\u2588\u2588\u2588\u2588    ",
+    "\u2588\u2588       \u2588\u2588   \u2588\u2588  \u2588\u2588    \u2588\u2588 \u2588\u2588    \u2588\u2588 \u2588\u2588\u2588   \u2588\u2588 \u2588\u2588   \u2588\u2588  ",
+    "\u2588\u2588  \u2588\u2588\u2588\u2588 \u2588\u2588\u2588\u2588\u2588\u2588   \u2588\u2588    \u2588\u2588 \u2588\u2588    \u2588\u2588 \u2588\u2588 \u2588\u2588 \u2588\u2588 \u2588\u2588    \u2588\u2588 ",
+    "\u2588\u2588    \u2588\u2588 \u2588\u2588  \u2588\u2588   \u2588\u2588    \u2588\u2588 \u2588\u2588    \u2588\u2588 \u2588\u2588   \u2588\u2588\u2588 \u2588\u2588   \u2588\u2588  ",
+    " \u2588\u2588\u2588\u2588\u2588\u2588  \u2588\u2588   \u2588\u2588   \u2588\u2588\u2588\u2588\u2588\u2588   \u2588\u2588\u2588\u2588\u2588\u2588  \u2588\u2588    \u2588\u2588 \u2588\u2588\u2588\u2588\u2588    ",
+    "         \u2588\u2588\u2588\u2588\u2588\u2588  \u2588\u2588\u2588\u2588\u2588\u2588   \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588 \u2588\u2588    \u2588\u2588      ",
+    "        \u2588\u2588       \u2588\u2588   \u2588\u2588  \u2588\u2588       \u2588\u2588    \u2588\u2588      ",
+    "        \u2588\u2588       \u2588\u2588\u2588\u2588\u2588\u2588   \u2588\u2588\u2588\u2588\u2588\u2588   \u2588\u2588 \u2588\u2588 \u2588\u2588      ",
+    "        \u2588\u2588       \u2588\u2588  \u2588\u2588   \u2588\u2588       \u2588\u2588\u2588\u2588 \u2588\u2588\u2588\u2588     ",
+    "         \u2588\u2588\u2588\u2588\u2588\u2588  \u2588\u2588   \u2588\u2588  \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588  \u2588\u2588   \u2588\u2588      "
+  ];
+  const W = 56;
+  const sess = `  Session ${current.id}  ${projectName}`;
+  const hint = "  Type tasks to queue. / for commands.";
+  const pad = (s, w) => s + " ".repeat(Math.max(0, w - s.length));
   console.log();
-  console.log(dim("  \u256D\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256E"));
-  console.log(dim("  \u2502                                                              \u2502"));
-  console.log(dim("  \u2502") + cyan("    \u2554\u2550\u2557\u252C\u2500\u2510\u250C\u2500\u2510\u252C \u252C\u250C\u2510\u250C\u250C\u252C\u2510\u2554\u2550\u2557\u252C\u2500\u2510\u250C\u2500\u2510\u252C \u252C") + dim("                       \u2502"));
-  console.log(dim("  \u2502") + cyan("    \u2551 \u2566\u251C\u252C\u2518\u2502 \u2502\u2502 \u2502\u2502\u2502\u2502 \u2502\u2502\u2551  \u2560\u2566\u255D\u251C\u2524 \u2502\u2502\u2502") + dim("                       \u2502"));
-  console.log(dim("  \u2502") + cyan("    \u255A\u2550\u255D\u2534\u2514\u2500\u2514\u2500\u2518\u2514\u2500\u2518\u2518\u2514\u2518\u2500\u2534\u2518\u255A\u2550\u255D\u2534\u2514\u2500\u2514\u2500\u2518\u2514\u2534\u2518") + dim("                       \u2502"));
-  console.log(dim("  \u2502                                                              \u2502"));
-  console.log(dim("  \u2502") + "  Session: " + bold(current.id) + "  " + dim(projectName) + " ".repeat(Math.max(1, 48 - current.id.length - projectName.length)) + dim("\u2502"));
-  console.log(dim("  \u2502") + "  Type tasks to queue. " + cyan("/") + " for commands. " + cyan("\\") + " for multiline." + dim("  \u2502"));
-  console.log(dim("  \u2502                                                              \u2502"));
-  console.log(dim("  \u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256F"));
+  console.log(dim("  \u256D" + "\u2500".repeat(W) + "\u256E"));
+  console.log(dim("  \u2502") + " ".repeat(W) + dim("\u2502"));
+  for (const line of banner) {
+    console.log(dim("  \u2502") + bold(cyan(pad(line, W))) + dim("\u2502"));
+  }
+  console.log(dim("  \u2502") + " ".repeat(W) + dim("\u2502"));
+  console.log(dim("  \u251C" + "\u2500".repeat(W) + "\u2524"));
+  console.log(dim("  \u2502") + pad(sess, W) + dim("\u2502"));
+  console.log(dim("  \u2502") + pad(hint, W) + dim("\u2502"));
+  console.log(dim("  \u2502") + " ".repeat(W) + dim("\u2502"));
+  console.log(dim("  \u2570" + "\u2500".repeat(W) + "\u256F"));
   console.log();
   let continuationBuffer = [];
   rl.on("close", () => {
