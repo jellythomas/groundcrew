@@ -104,19 +104,41 @@ Type tasks in the chat, they get queued and processed automatically.
 
 ### Dispatch: Queue Multiple Tasks
 
-Use `/dispatch` to break a request into queued tasks:
+Use `/dispatch` to break a request into queued tasks. All tasks are **auto-chained with dependencies** — each waits for the previous one to complete.
 
+**Chain skills explicitly:**
 ```
 /dispatch /planning-task MC-1234 parent:develop → /developing-task MC-1234 parent:develop
 ```
 
-Or let Claude decompose for you:
+**Full flow with PR:**
+```
+/dispatch /planning-task MC-1234 parent:develop → /developing-task MC-1234 parent:develop → /open-pr
+```
 
+**Let the agent decompose plain text:**
 ```
 /dispatch refactor auth middleware, then write tests, then open a PR
 ```
 
-Tasks are auto-chained with dependencies — each task waits for the previous one to complete.
+**Mix skills and plain text:**
+```
+/dispatch /planning-task MC-5678 parent:main → implement the plan → /commit → /open-pr
+```
+
+**Batch multiple tickets sequentially:**
+```
+/dispatch /planning-task MC-100 parent:develop → /developing-task MC-100 parent:develop → /planning-task MC-101 parent:develop → /developing-task MC-101 parent:develop
+```
+
+**Or queue manually from CLI (no dispatch needed):**
+```bash
+groundcrew add "/planning-task MC-1234 parent:develop"
+groundcrew add "/developing-task MC-1234 parent:develop"
+groundcrew add "/open-pr"
+```
+
+> **How dependencies work:** `populate_queue` (used by dispatch) auto-chains tasks — task 2 depends on task 1, task 3 on task 2, etc. `get_task` won't return a task until its dependency is in `completed[]`. This is enforced server-side.
 
 ### Interactive Chat Mode (Recommended)
 

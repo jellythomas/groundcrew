@@ -11,5 +11,6 @@
   "keywords": ["queue", "autonomous", "feedback", "human-in-the-loop", "task-management", "productivity"],
   "category": "productivity",
   "hooks": "hooks.json",
-  "mcpServers": ".mcp.json"
+  "mcpServers": ".mcp.json",
+  "skills": "./skills/"
 }
