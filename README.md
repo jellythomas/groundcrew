@@ -2,16 +2,16 @@
 
 Your ground crew keeps the copilot flying.
 
-Groundcrew is a Claude Code plugin that turns Claude into an autonomous task execution engine. Queue tasks, send feedback mid-flight, and let the agent work through your entire backlog — all from the terminal.
+Groundcrew is a Copilot CLI plugin that turns Copilot into an autonomous task execution engine. Queue tasks, send feedback mid-flight, and let the agent work through your entire backlog — all from the terminal.
 
 One prompt. Unlimited tasks. Minimal premium requests.
 
 ## How It Works
 
 ```
-Terminal 1 (Claude Code)              Terminal 2 (groundcrew chat)
+Terminal 1 (Copilot CLI)              Terminal 2 (groundcrew chat)
 ─────────────────────────             ─────────────────────────
-$ claude                              $ groundcrew chat
+$ copilot                              $ groundcrew chat
 
 > "start groundcrew"                  [myproject-a1b2] > build auth module
                                       ✓ Queued
@@ -59,13 +59,13 @@ MCP tool responses are not user prompts. The agent's internal loop (tool calls �
 
 ### Prerequisites
 
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) installed
+- [GitHub Copilot CLI](https://docs.github.com/en/copilot) installed
 - Node.js 20+
 
 ### Install
 
 ```bash
-claude plugin install jellythomas/groundcrew
+copilot plugin install jellythomas/groundcrew
 ```
 
 Installs the MCP server, hooks, CLI companion, and the `/dispatch` command.
@@ -90,8 +90,8 @@ groundcrew --help
 ### Quick Start
 
 ```bash
-# Terminal 1: Start Claude Code and activate groundcrew
-claude
+# Terminal 1: Start Copilot CLI and activate groundcrew
+copilot
 > "start groundcrew"
 ```
 
@@ -342,7 +342,7 @@ groundcrew queue
 
 ## Inspired By
 
-[TaskSync](https://github.com/4regab/TaskSync) — the original VS Code extension that pioneered human-in-the-loop task orchestration. Groundcrew brings the same concept to Claude Code as a native plugin.
+[TaskSync](https://github.com/4regab/TaskSync) — the original VS Code extension that pioneered human-in-the-loop task orchestration. Groundcrew brings the same concept to Copilot CLI as a native plugin.
 
 ## License
 
