@@ -544,54 +544,37 @@ function chatCompleter(line: string): [string[], string] {
  * Renders dimmed text after cursor, erased on next keystroke.
  */
 function setupInlineSuggestions(rl: readline.Interface): void {
-  let lastGhostLen = 0;
+  let hasGhost = false;
 
   const clearGhost = () => {
-    if (lastGhostLen > 0) {
-      // Move cursor back to end of typed text, clear ghost
-      process.stdout.write("\x1b[" + lastGhostLen + "D");
-      process.stdout.write("\x1b[0K");
-      lastGhostLen = 0;
+    if (hasGhost) {
+      // Restore cursor to where user was typing, clear everything after
+      process.stdout.write("\x1b[u\x1b[K");
+      hasGhost = false;
     }
   };
 
   const showGhost = () => {
     const line = (rl as any).line as string;
     if (!line || !line.startsWith("/") || line.includes(" ")) {
-      clearGhost();
       return;
     }
 
     const matches = CHAT_COMMANDS.filter((c) => c.cmd.startsWith(line));
-    if (matches.length === 0) {
-      clearGhost();
-      return;
-    }
-
-    // Calculate available space to prevent line wrapping
-    const promptLen = ((rl as any)._prompt || "").replace(/\x1b\[[0-9;]*m/g, "").length;
-    const cols = process.stdout.columns || 80;
-    const usedCols = promptLen + line.length;
-    const available = cols - usedCols - 1; // -1 safety margin
-
-    if (available <= 3) {
-      clearGhost();
-      return;
-    }
+    if (matches.length === 0) return;
 
     const best = matches[0];
-    const ghost = best.cmd.slice(line.length);
-    let fullGhost = `${ghost} \u2014 ${best.desc}`;
+    const remainder = best.cmd.slice(line.length);
+    if (!remainder && matches.length === 1) return;
 
-    // Truncate to fit
-    if (fullGhost.length > available) {
-      fullGhost = fullGhost.slice(0, available - 1) + "\u2026";
-    }
+    const ghost = `${remainder} \u2014 ${best.desc}`;
 
-    clearGhost();
-    process.stdout.write(`\x1b[2m${fullGhost}\x1b[0m`);
-    lastGhostLen = fullGhost.length;
-    process.stdout.write("\x1b[" + lastGhostLen + "D");
+    // Save cursor, write dimmed ghost, restore cursor
+    process.stdout.write("\x1b[s");       // save cursor position
+    process.stdout.write("\x1b[K");       // clear to end of line (remove old ghost)
+    process.stdout.write(`\x1b[2m${ghost}\x1b[0m`); // write dimmed ghost
+    process.stdout.write("\x1b[u");       // restore cursor to typing position
+    hasGhost = true;
   };
 
   // Listen to keypresses

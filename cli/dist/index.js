@@ -415,43 +415,29 @@ function chatCompleter(line) {
   return [[], line];
 }
 function setupInlineSuggestions(rl) {
-  let lastGhostLen = 0;
+  let hasGhost = false;
   const clearGhost = () => {
-    if (lastGhostLen > 0) {
-      process.stdout.write("\x1B[" + lastGhostLen + "D");
-      process.stdout.write("\x1B[0K");
-      lastGhostLen = 0;
+    if (hasGhost) {
+      process.stdout.write("\x1B[u\x1B[K");
+      hasGhost = false;
     }
   };
   const showGhost = () => {
     const line = rl.line;
     if (!line || !line.startsWith("/") || line.includes(" ")) {
-      clearGhost();
       return;
     }
     const matches = CHAT_COMMANDS.filter((c) => c.cmd.startsWith(line));
-    if (matches.length === 0) {
-      clearGhost();
-      return;
-    }
-    const promptLen = (rl._prompt || "").replace(/\x1b\[[0-9;]*m/g, "").length;
-    const cols = process.stdout.columns || 80;
-    const usedCols = promptLen + line.length;
-    const available = cols - usedCols - 1;
-    if (available <= 3) {
-      clearGhost();
-      return;
-    }
+    if (matches.length === 0) return;
     const best = matches[0];
-    const ghost = best.cmd.slice(line.length);
-    let fullGhost = `${ghost} \u2014 ${best.desc}`;
-    if (fullGhost.length > available) {
-      fullGhost = fullGhost.slice(0, available - 1) + "\u2026";
-    }
-    clearGhost();
-    process.stdout.write(`\x1B[2m${fullGhost}\x1B[0m`);
-    lastGhostLen = fullGhost.length;
-    process.stdout.write("\x1B[" + lastGhostLen + "D");
+    const remainder = best.cmd.slice(line.length);
+    if (!remainder && matches.length === 1) return;
+    const ghost = `${remainder} \u2014 ${best.desc}`;
+    process.stdout.write("\x1B[s");
+    process.stdout.write("\x1B[K");
+    process.stdout.write(`\x1B[2m${ghost}\x1B[0m`);
+    process.stdout.write("\x1B[u");
+    hasGhost = true;
   };
   process.stdin.on("keypress", (_ch, key) => {
     if (!key) return;
