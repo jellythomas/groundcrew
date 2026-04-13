@@ -4,6 +4,7 @@ import{createRequire}from'module';const require=createRequire(import.meta.url);
 import fs from "fs/promises";
 import { existsSync } from "fs";
 import path from "path";
+import os from "os";
 import readline from "readline";
 import { execFile, execFileSync } from "child_process";
 import { promisify } from "util";
@@ -73,35 +74,21 @@ close access fp`], { timeout: 3e3, stdio: ["pipe", "pipe", "pipe"] });
     return null;
   }
 }
-var GROUNDCREW_DIR = ".groundcrew";
-var SESSIONS_DIR = path.join(GROUNDCREW_DIR, "sessions");
-var ACTIVE_SESSIONS_FILE = path.join(GROUNDCREW_DIR, "active-sessions.json");
-var HISTORY_FILE = path.join(GROUNDCREW_DIR, "history.json");
+var GROUNDCREW_HOME = path.join(os.homedir(), ".groundcrew");
+var SESSIONS_DIR = path.join(GROUNDCREW_HOME, "sessions");
+var ACTIVE_SESSIONS_FILE = path.join(GROUNDCREW_HOME, "active-sessions.json");
+var HISTORY_FILE = path.join(GROUNDCREW_HOME, "history.json");
+var REPO_NAME = "";
 async function resolveRoot() {
   let root = null;
   try {
     const { stdout } = await execFileAsync("git", ["rev-parse", "--show-toplevel"]);
-    const gitRoot = stdout.trim();
-    if (gitRoot && existsSync(path.join(gitRoot, ".groundcrew"))) {
-      root = gitRoot;
-    }
+    root = stdout.trim() || null;
   } catch {
   }
-  if (!root) {
-    let dir = process.cwd();
-    while (dir !== path.dirname(dir)) {
-      if (existsSync(path.join(dir, ".groundcrew"))) {
-        root = dir;
-        break;
-      }
-      dir = path.dirname(dir);
-    }
-  }
   if (!root) root = process.cwd();
-  GROUNDCREW_DIR = path.join(root, ".groundcrew");
-  SESSIONS_DIR = path.join(GROUNDCREW_DIR, "sessions");
-  ACTIVE_SESSIONS_FILE = path.join(GROUNDCREW_DIR, "active-sessions.json");
-  HISTORY_FILE = path.join(GROUNDCREW_DIR, "history.json");
+  REPO_NAME = path.basename(root).replace(/[^a-zA-Z0-9_-]/g, "_") || "unknown";
+  await fs.mkdir(SESSIONS_DIR, { recursive: true });
 }
 async function readActiveSessions() {
   try {
@@ -109,6 +96,9 @@ async function readActiveSessions() {
   } catch {
     return {};
   }
+}
+function isRepoSession(sessionId) {
+  return sessionId.startsWith(REPO_NAME + "-");
 }
 async function resolveSessionDir(explicitSession) {
   if (explicitSession) {
@@ -119,10 +109,10 @@ async function resolveSessionDir(explicitSession) {
     return dir;
   }
   const sessions2 = await readActiveSessions();
-  const ids = Object.keys(sessions2);
+  const ids = Object.keys(sessions2).filter(isRepoSession);
   if (ids.length === 0) {
     try {
-      const dirs = await fs.readdir(SESSIONS_DIR);
+      const dirs = (await fs.readdir(SESSIONS_DIR)).filter(isRepoSession);
       if (dirs.length === 1) return path.join(SESSIONS_DIR, dirs[0]);
       if (dirs.length > 1) {
         let latest2 = { dir: dirs[0], mtime: 0 };
@@ -139,7 +129,7 @@ async function resolveSessionDir(explicitSession) {
       }
     } catch {
     }
-    throw new Error("No active sessions. Start Copilot with groundcrew first.");
+    throw new Error(`No active sessions for repo "${REPO_NAME}". Start Copilot with groundcrew first.`);
   }
   if (ids.length === 1) {
     return path.join(SESSIONS_DIR, ids[0]);
@@ -187,7 +177,7 @@ var bold = (t) => color(1, t);
 var red = (t) => color(31, t);
 async function init() {
   await fs.mkdir(SESSIONS_DIR, { recursive: true });
-  console.log(green("Groundcrew initialized.") + ` ${dim(GROUNDCREW_DIR + "/ created")}`);
+  console.log(green("Groundcrew initialized.") + ` ${dim(GROUNDCREW_HOME + "/ ready")}`);
 }
 async function add(taskText, priority, sessionDir) {
   const queue = await readQueue(sessionDir);
@@ -308,23 +298,35 @@ async function sessions() {
     console.log(dim("No sessions found."));
     return;
   }
-  console.log(bold("Sessions:\n"));
+  const byRepo = /* @__PURE__ */ new Map();
   for (const dir of allDirs) {
-    const isActive = ids.includes(dir);
-    const sessionDir = path.join(SESSIONS_DIR, dir);
-    let info = "";
-    try {
-      const session = JSON.parse(await fs.readFile(path.join(sessionDir, "session.json"), "utf-8"));
-      const startTime = new Date(session.started).getTime();
-      const minutes = Math.round((Date.now() - startTime) / 6e4);
-      const statusColor = session.status === "active" ? green : session.status === "parked" ? yellow : dim;
-      info = `${statusColor(session.status)} | ${minutes}min | ${session.tasksCompleted || 0} tasks done`;
-    } catch {
-      info = dim("no session data");
+    const dashIdx = dir.lastIndexOf("-");
+    const repo = dashIdx > 0 ? dir.substring(0, dashIdx) : "unknown";
+    if (!byRepo.has(repo)) byRepo.set(repo, []);
+    byRepo.get(repo).push(dir);
+  }
+  console.log(bold("Sessions:\n"));
+  for (const [repo, dirs] of byRepo) {
+    const isCurrent = repo === REPO_NAME;
+    console.log(`  ${isCurrent ? green(repo) : dim(repo)}`);
+    for (const dir of dirs) {
+      const isActive = ids.includes(dir);
+      const sessionDir = path.join(SESSIONS_DIR, dir);
+      let info = "";
+      try {
+        const session = JSON.parse(await fs.readFile(path.join(sessionDir, "session.json"), "utf-8"));
+        const startTime = new Date(session.started).getTime();
+        const minutes = Math.round((Date.now() - startTime) / 6e4);
+        const statusColor = session.status === "active" ? green : session.status === "parked" ? yellow : dim;
+        info = `${statusColor(session.status)} | ${minutes}min | ${session.tasksCompleted || 0} tasks done`;
+      } catch {
+        info = dim("no session data");
+      }
+      const queue = await readQueue(sessionDir);
+      const marker = isActive ? green("*") : " ";
+      const shortId = dir.substring(repo.length + 1);
+      console.log(`    ${marker} ${cyan(shortId)}  ${info} | ${queue.tasks.length} queued`);
     }
-    const queue = await readQueue(sessionDir);
-    const marker = isActive ? green("*") : " ";
-    console.log(`  ${marker} ${cyan(dir)}  ${info} | ${queue.tasks.length} queued`);
   }
   if (ids.length > 0) {
     console.log(dim(`
@@ -381,14 +383,14 @@ async function destroyOne(sessionId) {
 }
 async function stopAll() {
   const active = await readActiveSessions();
-  const ids = Object.keys(active);
+  const ids = Object.keys(active).filter(isRepoSession);
   let allDirs = [];
   try {
-    allDirs = await fs.readdir(SESSIONS_DIR);
+    allDirs = (await fs.readdir(SESSIONS_DIR)).filter(isRepoSession);
   } catch {
   }
   if (ids.length === 0 && allDirs.length === 0) {
-    console.log(dim("No sessions to stop."));
+    console.log(dim(`No sessions to stop for repo "${REPO_NAME}".`));
     return;
   }
   for (const id of ids) {
@@ -404,36 +406,32 @@ async function stopAll() {
       console.log(`  ${green("cleaned")}  ${cyan(dir)} ${dim("(orphaned)")}`);
     }
   }
-  await fs.writeFile(ACTIVE_SESSIONS_FILE, "{}");
-  console.log(green("\nAll sessions stopped."));
+  const remaining = await readActiveSessions();
+  for (const id of ids) delete remaining[id];
+  await fs.writeFile(ACTIVE_SESSIONS_FILE, JSON.stringify(remaining, null, 2));
+  console.log(green(`
+All ${REPO_NAME} sessions stopped.`));
 }
 async function destroyAll() {
   await stopAll();
   try {
-    const dirs = await fs.readdir(SESSIONS_DIR);
+    const dirs = (await fs.readdir(SESSIONS_DIR)).filter(isRepoSession);
     for (const dir of dirs) {
       await fs.rm(path.join(SESSIONS_DIR, dir), { recursive: true, force: true });
     }
   } catch {
   }
   try {
-    await fs.unlink(HISTORY_FILE);
+    await fs.unlink(path.join(GROUNDCREW_HOME, "tool-history.csv"));
   } catch {
   }
-  try {
-    await fs.unlink(ACTIVE_SESSIONS_FILE);
-  } catch {
-  }
-  try {
-    await fs.unlink(path.join(GROUNDCREW_DIR, "tool-history.csv"));
-  } catch {
-  }
-  console.log(green("All session data and history deleted."));
+  console.log(green(`All ${REPO_NAME} session data deleted.`));
 }
 async function listSessionChoices() {
   const active = await readActiveSessions();
   const choices = [];
   for (const [id, entry] of Object.entries(active)) {
+    if (!isRepoSession(id)) continue;
     const dir = path.join(SESSIONS_DIR, id);
     let status2 = "active";
     let minutes = 0;
@@ -458,7 +456,7 @@ async function listSessionChoices() {
 async function pickSession(rl) {
   const choices = await listSessionChoices();
   if (choices.length === 0) {
-    console.log(red("No active sessions. Start Copilot with groundcrew first."));
+    console.log(red(`No active sessions for repo "${REPO_NAME}". Start Copilot with groundcrew first.`));
     return null;
   }
   if (choices.length === 1) {
@@ -500,6 +498,7 @@ function readMultilineInput(sessionId, projectName, gitCtx, sessionDir) {
     let crow = 0;
     let ccol = 0;
     const padWidth = sessionId.length + 5;
+    const linePad = (i) => i === 0 ? padWidth : 0;
     let lastTermRow = 0;
     let pasteBuffer = "";
     let isPasting = false;
@@ -523,7 +522,7 @@ function readMultilineInput(sessionId, projectName, gitCtx, sessionDir) {
         if (i === 0) {
           buf.push(dim(`[${sessionId}]`) + " " + bold(">") + " " + lines[i]);
         } else {
-          buf.push(" ".repeat(padWidth) + lines[i]);
+          buf.push(lines[i]);
         }
       }
       let suggestionRows = 0;
@@ -539,12 +538,24 @@ function readMultilineInput(sessionId, projectName, gitCtx, sessionDir) {
         }
       }
       const lastRow = lines.length - 1;
-      const rowsUp = lastRow - crow + suggestionRows;
-      if (rowsUp > 0) buf.push(`\x1B[${rowsUp}A`);
+      const termRowsForLine = (i) => {
+        const lineLen = linePad(i) + lines[i].length;
+        return lineLen === 0 ? 1 : Math.max(1, Math.ceil(lineLen / termW));
+      };
+      let rowsBelowCursor = suggestionRows;
+      for (let i = lastRow; i > crow; i--) rowsBelowCursor += termRowsForLine(i);
+      const cursorLineTermRows = termRowsForLine(crow);
+      const cursorPad = linePad(crow);
+      const cursorRowWithinLine = Math.floor((cursorPad + ccol) / termW);
+      rowsBelowCursor += cursorLineTermRows - 1 - cursorRowWithinLine;
+      if (rowsBelowCursor > 0) buf.push(`\x1B[${rowsBelowCursor}A`);
       buf.push("\r");
-      const col = padWidth + ccol;
+      const col = (cursorPad + ccol) % termW;
       if (col > 0) buf.push(`\x1B[${col}C`);
-      lastTermRow = 1 + crow;
+      let rowsAbove = 1;
+      for (let i = 0; i < crow; i++) rowsAbove += termRowsForLine(i);
+      rowsAbove += cursorRowWithinLine;
+      lastTermRow = rowsAbove;
       process.stdout.write(buf.join(""));
     };
     const finish = (result) => {
@@ -561,7 +572,7 @@ function readMultilineInput(sessionId, projectName, gitCtx, sessionDir) {
         if (i === 0) {
           buf.push(dim(`[${sessionId}]`) + " " + bold(">") + " " + lines[i]);
         } else {
-          buf.push(" ".repeat(padWidth) + lines[i]);
+          buf.push(lines[i]);
         }
       }
       buf.push("\n");
@@ -1103,7 +1114,7 @@ ${bold("groundcrew")} \u2014 CLI companion for the Groundcrew Copilot plugin
 ${bold("Usage:")}
   groundcrew chat                              Interactive chat mode (recommended)
   groundcrew chat --session <id>               Chat with a specific session
-  groundcrew init                              Initialize .groundcrew/ in current dir
+  groundcrew init                              Initialize ~/.groundcrew/ (centralized)
   groundcrew add <task>                        Add a task to the queue
   groundcrew add --priority <task>             Add an urgent task (processed first)
   groundcrew add --session <id> <task>         Add to a specific session
@@ -1114,9 +1125,9 @@ ${bold("Usage:")}
   groundcrew sessions                          List all sessions
   groundcrew history                           Show completed tasks
   groundcrew clear                             Clear all pending tasks
-  groundcrew stop                              Stop all active sessions
+  groundcrew stop                              Stop all sessions for current repo
   groundcrew stop --session <id>               Stop a specific session
-  groundcrew destroy                           Delete all sessions, history, and data
+  groundcrew destroy                           Delete all sessions for current repo
   groundcrew destroy --session <id>            Delete a specific session
 
 ${bold("Session targeting:")}

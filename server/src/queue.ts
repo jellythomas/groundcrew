@@ -79,7 +79,16 @@ export async function populateQueue(
   return tasks;
 }
 
-export async function getNextTask(timeoutMs: number): Promise<Task | null> {
+export interface BlockingOptions {
+  timeoutMs: number;
+  /** Called periodically while blocking so callers can send heartbeats / progress */
+  onHeartbeat?: () => void;
+  /** Interval between heartbeat calls (default: 30 000 ms) */
+  heartbeatIntervalMs?: number;
+}
+
+export async function getNextTask(opts: BlockingOptions): Promise<Task | null> {
+  const { timeoutMs, onHeartbeat, heartbeatIntervalMs = 30_000 } = opts;
   const queueFile = getQueueFile();
 
   // Check queue immediately
@@ -96,16 +105,18 @@ export async function getNextTask(timeoutMs: number): Promise<Task | null> {
   // Ensure the queue file exists for watching
   await fs.writeFile(queueFile, JSON.stringify(emptyQueue()), { flag: "wx" }).catch(() => {});
 
-  // Block — watch for file changes
+  // Block — watch for file changes, send heartbeats to keep MCP alive
   return new Promise<Task | null>((resolve) => {
     let watcher: FSWatcher | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let poll: ReturnType<typeof setInterval> | undefined;
+    let heartbeat: ReturnType<typeof setInterval> | undefined;
 
     const cleanup = () => {
       watcher?.close();
       if (timer) clearTimeout(timer);
       if (poll) clearInterval(poll);
+      if (heartbeat) clearInterval(heartbeat);
     };
 
     const checkQueue = async () => {
@@ -128,6 +139,11 @@ export async function getNextTask(timeoutMs: number): Promise<Task | null> {
 
     // Also poll every 1s as fallback (some fs watchers miss events)
     poll = setInterval(() => { checkQueue(); }, 1000);
+
+    // Heartbeat keeps MCP client from timing out the pending request
+    if (onHeartbeat) {
+      heartbeat = setInterval(() => { onHeartbeat(); }, heartbeatIntervalMs);
+    }
 
     timer = setTimeout(() => {
       cleanup();
