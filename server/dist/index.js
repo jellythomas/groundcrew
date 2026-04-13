@@ -13894,6 +13894,7 @@ import { watch } from "fs";
 // src/paths.ts
 import fs from "fs/promises";
 import { existsSync, readFileSync } from "fs";
+import { execFileSync } from "child_process";
 import path from "path";
 import crypto from "crypto";
 import os from "os";
@@ -13920,7 +13921,18 @@ var repoName = "";
 var sessionId = null;
 var sessionDir = null;
 function deriveRepoName(projectDir) {
-  return path.basename(projectDir).replace(/[^a-zA-Z0-9_-]/g, "_") || "unknown";
+  try {
+    const gitCommonDir = execFileSync("git", ["rev-parse", "--git-common-dir"], {
+      cwd: projectDir,
+      encoding: "utf8",
+      timeout: 3e3,
+      stdio: ["pipe", "pipe", "pipe"]
+    }).trim();
+    const absGitDir = path.isAbsolute(gitCommonDir) ? gitCommonDir : path.resolve(projectDir, gitCommonDir);
+    return path.basename(path.dirname(absGitDir)).replace(/[^a-zA-Z0-9_-]/g, "_") || "unknown";
+  } catch {
+    return path.basename(projectDir).replace(/[^a-zA-Z0-9_-]/g, "_") || "unknown";
+  }
 }
 function generateSessionId() {
   const hex = crypto.randomBytes(4).toString("hex");

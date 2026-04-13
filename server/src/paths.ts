@@ -1,5 +1,6 @@
 import fs from "fs/promises";
 import { existsSync, readFileSync } from "fs";
+import { execFileSync } from "child_process";
 import path from "path";
 import crypto from "crypto";
 import os from "os";
@@ -43,11 +44,22 @@ let sessionId: string | null = null;
 let sessionDir: string | null = null;
 
 /**
- * Derive a short repo slug from the project directory.
+ * Derive a short repo slug from the main repo root.
+ * Uses git --git-common-dir to resolve through worktrees to the main repo.
+ * /Users/mekari/projects/mekari_credit/.worktrees/worktree-mc-9292 → "mekari_credit"
  * /Users/mekari/projects/mekari_credit → "mekari_credit"
  */
 function deriveRepoName(projectDir: string): string {
-  return path.basename(projectDir).replace(/[^a-zA-Z0-9_-]/g, "_") || "unknown";
+  try {
+    const gitCommonDir = execFileSync("git", ["rev-parse", "--git-common-dir"], {
+      cwd: projectDir, encoding: "utf8", timeout: 3000, stdio: ["pipe", "pipe", "pipe"],
+    }).trim();
+    // gitCommonDir is either ".git" (main repo) or absolute path like "/path/to/repo/.git"
+    const absGitDir = path.isAbsolute(gitCommonDir) ? gitCommonDir : path.resolve(projectDir, gitCommonDir);
+    return path.basename(path.dirname(absGitDir)).replace(/[^a-zA-Z0-9_-]/g, "_") || "unknown";
+  } catch {
+    return path.basename(projectDir).replace(/[^a-zA-Z0-9_-]/g, "_") || "unknown";
+  }
 }
 
 /**

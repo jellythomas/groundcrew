@@ -78,21 +78,26 @@ const HISTORY_FILE = path.join(GROUNDCREW_HOME, "history.json");
 let REPO_NAME = "";
 
 /**
- * Derive repo name from CWD (git-aware for worktree/subdirectory support).
+ * Derive repo name from CWD. Uses git --git-common-dir to resolve through
+ * worktrees to the main repo root, so all worktrees share one session namespace.
  */
 async function resolveRoot(): Promise<void> {
-  let root: string | null = null;
+  let repoRoot: string | null = null;
 
-  // 1. Try git rev-parse --show-toplevel (worktree-aware)
+  // 1. Try git --git-common-dir (resolves worktrees to main repo)
   try {
-    const { stdout } = await execFileAsync("git", ["rev-parse", "--show-toplevel"]);
-    root = stdout.trim() || null;
+    const { stdout: gitCommonDir } = await execFileAsync("git", ["rev-parse", "--git-common-dir"]);
+    const trimmed = gitCommonDir.trim();
+    if (trimmed) {
+      const absGitDir = path.isAbsolute(trimmed) ? trimmed : path.resolve(process.cwd(), trimmed);
+      repoRoot = path.dirname(absGitDir);
+    }
   } catch { /* not a git repo or git not installed */ }
 
   // 2. Fallback to CWD
-  if (!root) root = process.cwd();
+  if (!repoRoot) repoRoot = process.cwd();
 
-  REPO_NAME = path.basename(root).replace(/[^a-zA-Z0-9_-]/g, "_") || "unknown";
+  REPO_NAME = path.basename(repoRoot).replace(/[^a-zA-Z0-9_-]/g, "_") || "unknown";
 
   // Ensure centralized dirs exist
   await fs.mkdir(SESSIONS_DIR, { recursive: true });
@@ -142,56 +147,68 @@ function isRepoSession(sessionId: string): boolean {
 
 /**
  * Resolve which session to target.
- * Priority: --session flag > single active repo session > error if ambiguous.
+ * Priority: --session flag > repo match > any active session > error.
  */
 async function resolveSessionDir(explicitSession?: string): Promise<string> {
   if (explicitSession) {
+    // Allow short hex suffix — find the full session ID
     const dir = path.join(SESSIONS_DIR, explicitSession);
-    if (!existsSync(dir)) {
-      throw new Error(`Session "${explicitSession}" not found.`);
-    }
-    return dir;
-  }
+    if (existsSync(dir)) return dir;
 
-  const sessions = await readActiveSessions();
-  // Filter to sessions for THIS repo
-  const ids = Object.keys(sessions).filter(isRepoSession);
-
-  if (ids.length === 0) {
-    // Fallback: check session dirs on disk for this repo
+    // Try matching as suffix
     try {
-      const dirs = (await fs.readdir(SESSIONS_DIR)).filter(isRepoSession);
-      if (dirs.length === 1) return path.join(SESSIONS_DIR, dirs[0]);
-      if (dirs.length > 1) {
-        // Pick most recently modified
-        let latest = { dir: dirs[0], mtime: 0 };
-        for (const d of dirs) {
-          try {
-            const stat = await fs.stat(path.join(SESSIONS_DIR, d, "session.json"));
-            if (stat.mtimeMs > latest.mtime) {
-              latest = { dir: d, mtime: stat.mtimeMs };
-            }
-          } catch { /* skip */ }
-        }
-        return path.join(SESSIONS_DIR, latest.dir);
-      }
-    } catch { /* no sessions dir */ }
-    throw new Error(`No active sessions for repo "${REPO_NAME}". Start Copilot with groundcrew first.`);
+      const allDirs = await fs.readdir(SESSIONS_DIR);
+      const match = allDirs.find((d) => d.endsWith("-" + explicitSession));
+      if (match) return path.join(SESSIONS_DIR, match);
+    } catch {}
+
+    throw new Error(`Session "${explicitSession}" not found.`);
   }
 
-  if (ids.length === 1) {
-    return path.join(SESSIONS_DIR, ids[0]);
-  }
+  const active = await readActiveSessions();
 
-  // Multiple sessions — pick latest
-  let latest = { id: ids[0], time: 0 };
-  for (const id of ids) {
-    const started = new Date(sessions[id].started).getTime();
-    if (started > latest.time) {
-      latest = { id, time: started };
+  // 1. Try sessions for current repo first
+  const repoIds = Object.keys(active).filter(isRepoSession);
+  if (repoIds.length === 1) return path.join(SESSIONS_DIR, repoIds[0]);
+  if (repoIds.length > 1) {
+    let latest = { id: repoIds[0], time: 0 };
+    for (const id of repoIds) {
+      const started = new Date(active[id].started).getTime();
+      if (started > latest.time) latest = { id, time: started };
     }
+    return path.join(SESSIONS_DIR, latest.id);
   }
-  return path.join(SESSIONS_DIR, latest.id);
+
+  // 2. Fall back to ANY active session
+  const allIds = Object.keys(active);
+  if (allIds.length === 1) return path.join(SESSIONS_DIR, allIds[0]);
+  if (allIds.length > 1) {
+    let latest = { id: allIds[0], time: 0 };
+    for (const id of allIds) {
+      const started = new Date(active[id].started).getTime();
+      if (started > latest.time) latest = { id, time: started };
+    }
+    return path.join(SESSIONS_DIR, latest.id);
+  }
+
+  // 3. Check dirs on disk
+  try {
+    const dirs = await fs.readdir(SESSIONS_DIR);
+    const repoDirs = dirs.filter(isRepoSession);
+    const target = repoDirs.length > 0 ? repoDirs : dirs;
+    if (target.length >= 1) {
+      let latest = { dir: target[0], mtime: 0 };
+      for (const d of target) {
+        try {
+          const stat = await fs.stat(path.join(SESSIONS_DIR, d, "session.json"));
+          if (stat.mtimeMs > latest.mtime) latest = { dir: d, mtime: stat.mtimeMs };
+        } catch {}
+      }
+      return path.join(SESSIONS_DIR, latest.dir);
+    }
+  } catch {}
+
+  throw new Error("No active sessions. Start Copilot with groundcrew first.\n  Run 'groundcrew sessions' to see available sessions.");
 }
 
 function sessionQueueFile(sessionDir: string): string {
@@ -371,11 +388,11 @@ async function history(_sessionDir?: string): Promise<void> {
   }
 }
 
-async function sessions(): Promise<void> {
+async function sessions(filterRepo?: string, filterStatus?: string): Promise<void> {
   const active = await readActiveSessions();
   const ids = Object.keys(active);
 
-  // Also check for session dirs that may not be in active-sessions.json
+  // All session dirs on disk
   let allDirs: string[] = [];
   try {
     allDirs = await fs.readdir(SESSIONS_DIR);
@@ -391,23 +408,34 @@ async function sessions(): Promise<void> {
   for (const dir of allDirs) {
     const dashIdx = dir.lastIndexOf("-");
     const repo = dashIdx > 0 ? dir.substring(0, dashIdx) : "unknown";
+
+    // Apply --repo filter
+    if (filterRepo && repo !== filterRepo) continue;
+
     if (!byRepo.has(repo)) byRepo.set(repo, []);
     byRepo.get(repo)!.push(dir);
+  }
+
+  if (byRepo.size === 0) {
+    console.log(dim(filterRepo ? `No sessions found for repo "${filterRepo}".` : "No sessions found."));
+    return;
   }
 
   console.log(bold("Sessions:\n"));
 
   for (const [repo, dirs] of byRepo) {
     const isCurrent = repo === REPO_NAME;
-    console.log(`  ${isCurrent ? green(repo) : dim(repo)}`);
+    const repoEntries: string[] = [];
 
     for (const dir of dirs) {
       const isActive = ids.includes(dir);
       const sessionDir = path.join(SESSIONS_DIR, dir);
 
+      let sessionStatus = "unknown";
       let info = "";
       try {
         const session = JSON.parse(await fs.readFile(path.join(sessionDir, "session.json"), "utf-8"));
+        sessionStatus = session.status || "unknown";
         const startTime = new Date(session.started).getTime();
         const minutes = Math.round((Date.now() - startTime) / 60000);
         const statusColor = session.status === "active" ? green : session.status === "parked" ? yellow : dim;
@@ -416,12 +444,19 @@ async function sessions(): Promise<void> {
         info = dim("no session data");
       }
 
+      // Apply --status filter
+      if (filterStatus && sessionStatus !== filterStatus) continue;
+
       const queue = await readQueue(sessionDir);
       const marker = isActive ? green("*") : " ";
-      // Show only the hex suffix for cleaner display
       const shortId = dir.substring(repo.length + 1);
 
-      console.log(`    ${marker} ${cyan(shortId)}  ${info} | ${queue.tasks.length} queued`);
+      repoEntries.push(`    ${marker} ${cyan(shortId)}  ${info} | ${queue.tasks.length} queued`);
+    }
+
+    if (repoEntries.length > 0) {
+      console.log(`  ${isCurrent ? green(repo) : dim(repo)}`);
+      for (const entry of repoEntries) console.log(entry);
     }
   }
 
@@ -559,9 +594,6 @@ async function listSessionChoices(): Promise<SessionChoice[]> {
   const choices: SessionChoice[] = [];
 
   for (const [id, entry] of Object.entries(active)) {
-    // Only show sessions for the current repo
-    if (!isRepoSession(id)) continue;
-
     const dir = path.join(SESSIONS_DIR, id);
     let status = "active";
     let minutes = 0;
@@ -590,7 +622,7 @@ async function pickSession(rl: readline.Interface): Promise<SessionChoice | null
   const choices = await listSessionChoices();
 
   if (choices.length === 0) {
-    console.log(red(`No active sessions for repo "${REPO_NAME}". Start Copilot with groundcrew first.`));
+    console.log(red("No active sessions. Start Copilot with groundcrew first."));
     return null;
   }
 
@@ -1253,7 +1285,9 @@ ${bold("Usage:")}
   groundcrew feedback --session <id> <message> Send feedback to a specific session
   groundcrew queue                             List pending tasks
   groundcrew status                            Show session status and last update
-  groundcrew sessions                          List all sessions
+  groundcrew sessions                          List all sessions (all repos)
+  groundcrew sessions --repo mekari_credit     Filter by repo
+  groundcrew sessions --status active          Filter by status (active/parked/ended)
   groundcrew history                           Show completed tasks
   groundcrew clear                             Clear all pending tasks
   groundcrew stop                              Stop all sessions for current repo
@@ -1292,8 +1326,10 @@ async function main(): Promise<void> {
 
   const rawArgs = process.argv.slice(2);
 
-  // Extract --session flag from anywhere in args
-  const { value: explicitSession, remaining: args } = extractFlag(rawArgs, "--session");
+  // Extract flags from anywhere in args
+  const { value: explicitSession, remaining: args1 } = extractFlag(rawArgs, "--session");
+  const { value: filterRepo, remaining: args2 } = extractFlag(args1, "--repo");
+  const { value: filterStatus, remaining: args } = extractFlag(args2, "--status");
 
   const command = args[0];
 
@@ -1303,7 +1339,7 @@ async function main(): Promise<void> {
       await chat(explicitSession);
       return;
     case "sessions":
-      await sessions();
+      await sessions(filterRepo, filterStatus);
       return;
     case "history":
       await history();
