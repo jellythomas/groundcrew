@@ -8,6 +8,8 @@ export interface Task {
   source: "user" | "plan" | "feedback" | "import";
   priority: number;
   createdAt: string;
+  /** If set, this task won't dequeue until the dependency is in completed[] */
+  depends_on?: string;
 }
 
 export interface QueueData {
@@ -63,7 +65,8 @@ export async function addTask(
 
 export async function populateQueue(
   steps: string[],
-  source: Task["source"] = "plan"
+  source: Task["source"] = "plan",
+  chain = true
 ): Promise<Task[]> {
   const queue = await readQueue();
   const tasks: Task[] = steps.map((step, i) => ({
@@ -73,6 +76,14 @@ export async function populateQueue(
     priority: 0,
     createdAt: new Date().toISOString(),
   }));
+
+  // Auto-chain: each task depends on the previous one
+  if (chain && tasks.length > 1) {
+    for (let i = 1; i < tasks.length; i++) {
+      tasks[i].depends_on = tasks[i - 1].id;
+    }
+  }
+
   queue.tasks.push(...tasks);
   queue.tasks.sort((a, b) => b.priority - a.priority);
   await writeQueue(queue);
@@ -87,17 +98,33 @@ export interface BlockingOptions {
   heartbeatIntervalMs?: number;
 }
 
+/**
+ * Find the first task whose dependencies are satisfied.
+ * A task is ready if it has no depends_on, or its dependency is in completed[].
+ */
+function findReadyTask(queue: QueueData): Task | null {
+  const completedIds = new Set(queue.completed.map((c) => c.id));
+  const idx = queue.tasks.findIndex(
+    (t) => !t.depends_on || completedIds.has(t.depends_on)
+  );
+  if (idx === -1) return null;
+  return queue.tasks.splice(idx, 1)[0];
+}
+
 export async function getNextTask(opts: BlockingOptions): Promise<Task | null> {
   const { timeoutMs, onHeartbeat, heartbeatIntervalMs = 30_000 } = opts;
   const queueFile = getQueueFile();
 
   // Check queue immediately
   const queue = await readQueue();
-  if (queue.tasks.length > 0) {
-    const task = queue.tasks.shift()!;
+  const ready = findReadyTask(queue);
+  if (ready) {
     await writeQueue(queue);
-    return task;
+    return ready;
   }
+
+  // If tasks exist but none are ready (all blocked by dependencies), still wait
+  // — a completing task will unblock them
 
   // Instant return mode — no blocking, no slicing risk
   if (timeoutMs <= 0) return null;
@@ -122,8 +149,8 @@ export async function getNextTask(opts: BlockingOptions): Promise<Task | null> {
     const checkQueue = async () => {
       try {
         const q = await readQueue();
-        if (q.tasks.length > 0) {
-          const task = q.tasks.shift()!;
+        const task = findReadyTask(q);
+        if (task) {
           await writeQueue(q);
           cleanup();
           resolve(task);
