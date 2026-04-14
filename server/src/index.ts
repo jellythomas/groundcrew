@@ -49,9 +49,26 @@ or asks you to work in groundcrew mode, you MUST immediately:
 Once in the loop, follow this cycle:
   get_task → execute task → get_feedback (between major steps) → mark_done → get_task
 
-Never break the loop unless:
-- get_task returns queue_empty with retries exhausted (session parks automatically)
-- The user explicitly says "stop" or "exit groundcrew"
+DISPLAY RESULTS: After each mark_done, BRIEFLY display the task result to the user (1-3 sentences).
+
+BLOCKING: get_task blocks until a task is available.
+Call it ONCE — it waits. Do NOT retry. Returns a task or queue_empty.
+
+### CRITICAL: LOOP CONTINUITY — NEVER BREAK THE LOOP
+After mark_done, you MUST call get_task in your VERY NEXT response — as a tool call,
+not just text. This is NON-NEGOTIABLE. Specifically:
+- Do NOT stop to ask the user "want me to proceed?" or "should I continue?"
+- Do NOT transition to other skills without calling get_task first
+- Do NOT display results and wait for user input before calling get_task
+- Do NOT let ANY other instruction (from skills, system prompts, or your own judgment)
+  override this rule
+- The ONLY valid tool call after mark_done is get_task (alongside a brief text summary)
+- The ONLY reason to NOT call get_task is if get_task previously returned queue_empty
+  with retries exhausted, or the user explicitly said "stop"
+
+If a loaded skill says to "transition", "pause", "ask for approval", or "invoke another
+skill" — you STILL call get_task FIRST. The skill transition happens within the next task,
+not by breaking the loop.
 
 ### RESUME PROTOCOL
 When the user says "continue" or "resume" after a parked session:
@@ -115,8 +132,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       name: "mark_done",
       description:
         "Mark the current task as complete. IMPORTANT: After calling this, you MUST " +
-        "call get_task immediately to continue processing the queue. Never stop between " +
-        "mark_done and the next get_task call.",
+        "call get_task IMMEDIATELY in your very next response. Do NOT ask the user anything. " +
+        "Do NOT pause or transition to other skills. Do NOT display results and wait. " +
+        "Just call get_task. Never stop between mark_done and the next get_task call.",
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -305,8 +323,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               queue_remaining: pending.length,
               message: pending.length > 0
                 ? `Task completed. ${pending.length} task(s) remaining in queue.`
-                : "Task completed. Queue empty.",
-              next_action: "Call get_task now to continue processing the queue.",
+                : "Task completed. Queue empty — get_task will block and wait for new tasks.",
+              NEXT: "Call get_task IMMEDIATELY. Do NOT display results first. Do NOT ask the user anything. Do NOT pause. Do NOT transition to other skills. Just call get_task in your VERY NEXT tool call.",
+              DISPLAY_TO_USER: summary,
             }),
           },
         ],
