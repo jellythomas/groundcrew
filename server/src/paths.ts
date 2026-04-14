@@ -86,26 +86,57 @@ export async function initPaths(): Promise<void> {
 /**
  * Create a new session. Called when the `start` tool is invoked.
  * Creates ~/.groundcrew/sessions/<repo>-<hex>/ and registers in active-sessions.json.
+ * Verifies both the directory and the active-sessions.json entry exist before returning.
+ * Retries up to 3 times with exponential backoff if verification fails.
  */
 export async function createSession(): Promise<string> {
   if (sessionId) return sessionId; // already created, reuse
 
-  sessionId = generateSessionId();
-  sessionDir = path.join(SESSIONS_DIR, sessionId);
+  const MAX_RETRIES = 3;
 
-  await fs.mkdir(sessionDir, { recursive: true });
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    const candidate = generateSessionId();
+    const candidateDir = path.join(SESSIONS_DIR, candidate);
 
-  // Register this session in active-sessions.json
-  const activeSessions = await readActiveSessions();
-  activeSessions[sessionId] = {
-    started: new Date().toISOString(),
-    pid: process.pid,
-    cwd: PROJECT_DIR,
-    repo: repoName,
-  };
-  await fs.writeFile(ACTIVE_SESSION_FILE, JSON.stringify(activeSessions, null, 2));
+    try {
+      await fs.mkdir(candidateDir, { recursive: true });
 
-  return sessionId;
+      // Verify directory was actually created on disk
+      await fs.access(candidateDir);
+
+      // Register in active-sessions.json
+      const activeSessions = await readActiveSessions();
+      activeSessions[candidate] = {
+        started: new Date().toISOString(),
+        pid: process.pid,
+        cwd: PROJECT_DIR,
+        repo: repoName,
+      };
+      await fs.writeFile(ACTIVE_SESSION_FILE, JSON.stringify(activeSessions, null, 2));
+
+      // Verify registration was persisted
+      const verification = await readActiveSessions();
+      if (!verification[candidate]) {
+        throw new Error(`Session ${candidate} not found in active-sessions.json after write`);
+      }
+
+      // Both checks passed — commit to module state
+      sessionId = candidate;
+      sessionDir = candidateDir;
+      return sessionId;
+
+    } catch (err) {
+      // Clean up partial state before retry
+      try { await fs.rm(candidateDir, { recursive: true, force: true }); } catch { /* ignore */ }
+      if (attempt === MAX_RETRIES) {
+        throw new Error(`Failed to create session after ${MAX_RETRIES} attempts: ${err}`);
+      }
+      await new Promise((r) => setTimeout(r, 200 * attempt));
+    }
+  }
+
+  // Unreachable — loop above always throws or returns
+  throw new Error("Failed to create session");
 }
 
 /**

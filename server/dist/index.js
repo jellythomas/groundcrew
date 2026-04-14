@@ -13945,18 +13945,40 @@ async function initPaths() {
 }
 async function createSession() {
   if (sessionId) return sessionId;
-  sessionId = generateSessionId();
-  sessionDir = path.join(SESSIONS_DIR, sessionId);
-  await fs.mkdir(sessionDir, { recursive: true });
-  const activeSessions = await readActiveSessions();
-  activeSessions[sessionId] = {
-    started: (/* @__PURE__ */ new Date()).toISOString(),
-    pid: process.pid,
-    cwd: PROJECT_DIR,
-    repo: repoName
-  };
-  await fs.writeFile(ACTIVE_SESSION_FILE, JSON.stringify(activeSessions, null, 2));
-  return sessionId;
+  const MAX_RETRIES = 3;
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    const candidate = generateSessionId();
+    const candidateDir = path.join(SESSIONS_DIR, candidate);
+    try {
+      await fs.mkdir(candidateDir, { recursive: true });
+      await fs.access(candidateDir);
+      const activeSessions = await readActiveSessions();
+      activeSessions[candidate] = {
+        started: (/* @__PURE__ */ new Date()).toISOString(),
+        pid: process.pid,
+        cwd: PROJECT_DIR,
+        repo: repoName
+      };
+      await fs.writeFile(ACTIVE_SESSION_FILE, JSON.stringify(activeSessions, null, 2));
+      const verification = await readActiveSessions();
+      if (!verification[candidate]) {
+        throw new Error(`Session ${candidate} not found in active-sessions.json after write`);
+      }
+      sessionId = candidate;
+      sessionDir = candidateDir;
+      return sessionId;
+    } catch (err) {
+      try {
+        await fs.rm(candidateDir, { recursive: true, force: true });
+      } catch {
+      }
+      if (attempt === MAX_RETRIES) {
+        throw new Error(`Failed to create session after ${MAX_RETRIES} attempts: ${err}`);
+      }
+      await new Promise((r) => setTimeout(r, 200 * attempt));
+    }
+  }
+  throw new Error("Failed to create session");
 }
 async function cleanupSession() {
   if (!sessionId) return;
