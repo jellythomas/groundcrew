@@ -13898,11 +13898,19 @@ import { execFileSync } from "child_process";
 import path from "path";
 import crypto from "crypto";
 import os from "os";
-var MARKER_FILE = path.join(os.homedir(), ".groundcrew-active-project");
+var MARKER_FILE = path.join(os.homedir(), ".groundcrew", `project-${process.ppid}`);
+var MARKER_FILE_LEGACY = path.join(os.homedir(), ".groundcrew-active-project");
 async function resolveProjectDir() {
   for (let i = 0; i < 6; i++) {
     try {
       const projectDir = readFileSync(MARKER_FILE, "utf-8").trim();
+      if (projectDir && existsSync(projectDir)) {
+        return projectDir;
+      }
+    } catch {
+    }
+    try {
+      const projectDir = readFileSync(MARKER_FILE_LEGACY, "utf-8").trim();
       if (projectDir && existsSync(projectDir)) {
         return projectDir;
       }
@@ -13942,6 +13950,21 @@ async function initPaths() {
   PROJECT_DIR = await resolveProjectDir();
   repoName = deriveRepoName(PROJECT_DIR);
   await fs.mkdir(SESSIONS_DIR, { recursive: true });
+  try {
+    const files = await fs.readdir(GROUNDCREW_HOME);
+    for (const f of files) {
+      if (!f.startsWith("project-")) continue;
+      const pid = parseInt(f.slice("project-".length), 10);
+      if (isNaN(pid) || pid === process.ppid) continue;
+      try {
+        process.kill(pid, 0);
+      } catch {
+        await fs.unlink(path.join(GROUNDCREW_HOME, f)).catch(() => {
+        });
+      }
+    }
+  } catch {
+  }
 }
 async function createSession() {
   if (sessionId) return sessionId;
@@ -13964,6 +13987,10 @@ async function cleanupSession() {
     const activeSessions = await readActiveSessions();
     delete activeSessions[sessionId];
     await fs.writeFile(ACTIVE_SESSION_FILE, JSON.stringify(activeSessions, null, 2));
+  } catch {
+  }
+  try {
+    await fs.unlink(MARKER_FILE);
   } catch {
   }
 }

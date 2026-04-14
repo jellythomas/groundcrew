@@ -5,26 +5,42 @@ import path from "path";
 import crypto from "crypto";
 import os from "os";
 
-const MARKER_FILE = path.join(os.homedir(), ".groundcrew-active-project");
+// Per-session marker file keyed by parent PID (the Copilot CLI process).
+// Both the sessionStart hook ($PPID in bash) and this MCP server (process.ppid in Node)
+// share the same parent PID, so each session gets its own isolated file — no cross-session
+// overwrites when multiple repos are open at the same time.
+const MARKER_FILE = path.join(os.homedir(), ".groundcrew", `project-${process.ppid}`);
+
+// Legacy global marker kept for fallback / old installations.
+const MARKER_FILE_LEGACY = path.join(os.homedir(), ".groundcrew-active-project");
 
 /**
  * Resolve the project directory.
- * The sessionStart hook writes the project CWD to ~/.groundcrew-active-project.
+ * The sessionStart hook writes the project CWD to ~/.groundcrew/project-<PPID>.
  * MCP server CWD is the plugin install dir, not the project dir.
  *
  * Retries briefly on startup because the hook and MCP server start in parallel.
+ * Falls back to the legacy global marker if the per-session file is absent.
  */
 async function resolveProjectDir(): Promise<string> {
-  // Retry up to 3s waiting for the hook to write the marker file
+  // Retry up to 3s waiting for the hook to write the per-session marker file
   for (let i = 0; i < 6; i++) {
+    // 1. Try per-session file first (correct, isolated)
     try {
       const projectDir = readFileSync(MARKER_FILE, "utf-8").trim();
       if (projectDir && existsSync(projectDir)) {
         return projectDir;
       }
-    } catch {
-      // Not yet written
-    }
+    } catch { /* not yet written */ }
+
+    // 2. Fall back to legacy global file (old hook versions)
+    try {
+      const projectDir = readFileSync(MARKER_FILE_LEGACY, "utf-8").trim();
+      if (projectDir && existsSync(projectDir)) {
+        return projectDir;
+      }
+    } catch { /* not yet written */ }
+
     if (i < 5) await new Promise((r) => setTimeout(r, 500));
   }
   return process.cwd();
@@ -81,6 +97,20 @@ export async function initPaths(): Promise<void> {
 
   // Ensure centralized dirs exist
   await fs.mkdir(SESSIONS_DIR, { recursive: true });
+
+  // Prune stale per-session project markers whose parent process is no longer running
+  try {
+    const files = await fs.readdir(GROUNDCREW_HOME);
+    for (const f of files) {
+      if (!f.startsWith("project-")) continue;
+      const pid = parseInt(f.slice("project-".length), 10);
+      if (isNaN(pid) || pid === process.ppid) continue; // keep our own
+      try { process.kill(pid, 0); } catch {
+        // Process gone — remove the stale marker
+        await fs.unlink(path.join(GROUNDCREW_HOME, f)).catch(() => {});
+      }
+    }
+  } catch { /* best effort */ }
 }
 
 /**
@@ -109,7 +139,8 @@ export async function createSession(): Promise<string> {
 }
 
 /**
- * Remove this session from active-sessions.json. Called on shutdown.
+ * Remove this session from active-sessions.json and clean up the per-session
+ * project marker file. Called on shutdown.
  */
 export async function cleanupSession(): Promise<void> {
   if (!sessionId) return;
@@ -120,6 +151,8 @@ export async function cleanupSession(): Promise<void> {
   } catch {
     // Best effort
   }
+  // Remove the per-session project marker for our parent PID
+  try { await fs.unlink(MARKER_FILE); } catch { /* already gone */ }
 }
 
 export function getSessionId(): string {
