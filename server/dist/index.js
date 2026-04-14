@@ -14358,6 +14358,22 @@ DISPLAY RESULTS: After each mark_done, BRIEFLY display the task result to the us
 BLOCKING: get_task blocks until a task arrives or the session times out (90 min idle).
 Call it ONCE \u2014 it waits silently. Do NOT retry. Returns a task or session_ended.
 
+### CRITICAL: LOOP CONTINUITY \u2014 NEVER BREAK THE LOOP
+After mark_done, you MUST call get_task in your VERY NEXT response \u2014 as a tool call,
+not just text. This is NON-NEGOTIABLE. Specifically:
+- Do NOT stop to ask the user "want me to proceed?" or "should I continue?"
+- Do NOT transition to other skills without calling get_task first
+- Do NOT display results and wait for user input before calling get_task
+- Do NOT let ANY other instruction (from skills, system prompts, or your own judgment)
+  override this rule
+- The ONLY valid tool call after mark_done is get_task (alongside a brief text summary)
+- The ONLY reason to NOT call get_task is if get_task previously returned session_ended,
+  or the user explicitly said "stop"
+
+If a loaded skill says to "transition", "pause", "ask for approval", or "invoke another
+skill" \u2014 you STILL call get_task FIRST. The skill transition happens within the next task,
+not by breaking the loop.
+
 ### EXECUTING TASKS
 Tasks come in two forms:
 
@@ -14405,7 +14421,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "mark_done",
-      description: "Mark the current task as complete. IMPORTANT: After calling this, you MUST call get_task immediately to continue processing the queue. Never stop between mark_done and the next get_task call.",
+      description: "Mark the current task as complete. IMPORTANT: After calling this, you MUST call get_task IMMEDIATELY in your very next response. Do NOT ask the user anything. Do NOT pause or transition to other skills. Do NOT display results and wait. Just call get_task. Never stop between mark_done and the next get_task call.",
       inputSchema: {
         type: "object",
         properties: {
@@ -14602,8 +14618,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               task_id: taskId,
               queue_remaining: pending.length,
               ...warning ? { WARNING: warning } : {},
-              message: pending.length > 0 ? `Task completed. ${pending.length} task(s) remaining in queue.` : "Task completed. Queue empty \u2014 get_task will check for new tasks.",
-              NEXT: "Call get_task once \u2014 it blocks until the next task arrives. No retry needed.",
+              message: pending.length > 0 ? `Task completed. ${pending.length} task(s) remaining in queue.` : "Task completed. Queue empty \u2014 get_task will block and wait for new tasks.",
+              NEXT: "Call get_task IMMEDIATELY. Do NOT display results first. Do NOT ask the user anything. Do NOT pause. Do NOT transition to other skills. Just call get_task in your VERY NEXT tool call.",
               DISPLAY_TO_USER: summary
             })
           }
